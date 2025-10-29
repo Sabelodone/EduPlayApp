@@ -1,29 +1,43 @@
 {
   "expo": {
-    "name": "EduPlayApp",
-    "slug": "EduPlayApp",
+    "name": "EduPlay",
+    "slug": "eduplay-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.eduplay.app",
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#0A7C72"
       },
-      "edgeToEdgeEnabled": true
+      "package": "com.eduplay.app",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app needs access to your photos to let you share them with your learning community.",
+          "cameraPermission": "The app needs access to your camera to take photos for your profile and learning activities."
+        }
+      ]
+    ]
   }
 }
