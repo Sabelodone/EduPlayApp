@@ -1,185 +1,162 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import User, Challenge, ChallengeAttempt, AIInteraction
-from app.services.ai_service import AIService
+from app.models import User, Challenge, ChallengeAttempt, UserChallengeProgress
 from app import db
 from datetime import datetime
 import json
 
-ai_bp = Blueprint('ai', __name__)
+# Make sure this line exists exactly like this
+challenges_bp = Blueprint('challenges', __name__)
 
-@ai_bp.route('/api/ai/generate-challenge', methods=['POST'])
+@challenges_bp.route('/', methods=['GET'])
 @jwt_required()
-def generate_ai_challenge():
+def get_challenges():
+    """Get all challenges"""
     try:
         current_user_id = get_jwt_identity()
-        user = User.query.get(current_user_id)
+        category = request.args.get('category')
+        difficulty = request.args.get('difficulty')
         
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
+        query = Challenge.query.filter_by(is_active=True)
         
-        data = request.get_json()
-        preferences = data.get('preferences', {})
+        if category:
+            query = query.filter_by(category=category)
+        if difficulty:
+            query = query.filter_by(difficulty=difficulty)
         
-        ai_service = AIService()
-        challenge_data = ai_service.generate_challenge(
-            user_level=user.level,
-            preferences=preferences
-        )
+        challenges = query.all()
         
-        challenge = Challenge(
-            title=challenge_data['title'],
-            description=challenge_data['description'],
-            difficulty=challenge_data['difficulty'],
-            category=challenge_data['category'],
-            points=challenge_data['points'],
-            created_by='ai',
-            is_ai_generated=True
-        )
+        # Get user progress for challenges
+        user_progress = UserChallengeProgress.query.filter_by(user_id=current_user_id).all()
+        progress_map = {progress.challenge_id: progress for progress in user_progress}
         
-        db.session.add(challenge)
-        db.session.commit()
-        
-        interaction = AIInteraction(
-            user_id=current_user_id,
-            action='generate_challenge',
-            input_data=json.dumps(preferences),
-            output_data=json.dumps(challenge_data),
-            model_used=ai_service.current_model
-        )
-        db.session.add(interaction)
-        db.session.commit()
+        challenges_data = []
+        for challenge in challenges:
+            challenge_data = challenge.to_dict()
+            user_progress = progress_map.get(challenge.id)
+            challenge_data['user_progress'] = {
+                'completed': user_progress.completed if user_progress else False,
+                'attempts': user_progress.attempts_count if user_progress else 0,
+                'started_at': user_progress.started_at.isoformat() if user_progress and user_progress.started_at else None
+            }
+            challenges_data.append(challenge_data)
         
         return jsonify({
             'success': True,
-            'challenge': challenge.to_dict(),
-            'ai_feedback': challenge_data.get('ai_feedback', '')
-        }), 201
+            'challenges': challenges_data
+        }), 200
         
     except Exception as e:
-        current_app.logger.error(f"Error generating AI challenge: {str(e)}")
-        return jsonify({'error': 'Failed to generate challenge'}), 500
+        current_app.logger.error(f"Error fetching challenges: {str(e)}")
+        return jsonify({'error': 'Failed to fetch challenges'}), 500
 
-@ai_bp.route('/api/ai/analyze-solution', methods=['POST'])
+@challenges_bp.route('/<challenge_id>', methods=['GET'])
 @jwt_required()
-def analyze_solution():
+def get_challenge(challenge_id):
+    """Get specific challenge details"""
+    try:
+        challenge = Challenge.query.get(challenge_id)
+        
+        if not challenge:
+            return jsonify({'error': 'Challenge not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'challenge': challenge.to_dict()
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error fetching challenge: {str(e)}")
+        return jsonify({'error': 'Failed to fetch challenge'}), 500
+
+@challenges_bp.route('/<challenge_id>/attempt', methods=['POST'])
+@jwt_required()
+def submit_attempt(challenge_id):
+    """Submit a challenge attempt"""
     try:
         current_user_id = get_jwt_identity()
         data = request.get_json()
         
         solution_code = data.get('solution_code')
-        challenge_id = data.get('challenge_id')
-        
-        if not solution_code or not challenge_id:
-            return jsonify({'error': 'Solution code and challenge ID are required'}), 400
+        if not solution_code:
+            return jsonify({'error': 'Solution code is required'}), 400
         
         challenge = Challenge.query.get(challenge_id)
         if not challenge:
             return jsonify({'error': 'Challenge not found'}), 404
         
-        ai_service = AIService()
-        analysis = ai_service.analyze_solution(
-            challenge_description=challenge.description,
+        # Create attempt
+        attempt = ChallengeAttempt(
+            user_id=current_user_id,
+            challenge_id=challenge_id,
             solution_code=solution_code,
-            requirements={}
+            is_correct=False,  # Will be set by AI analysis
+            submitted_at=datetime.utcnow()
         )
         
-        interaction = AIInteraction(
+        # Update user progress
+        user_progress = UserChallengeProgress.query.filter_by(
             user_id=current_user_id,
-            action='analyze_solution',
-            input_data=json.dumps({
-                'challenge_id': challenge.id,
-                'solution_code_length': len(solution_code)
-            }),
-            output_data=json.dumps(analysis),
-            model_used=ai_service.current_model
-        )
-        db.session.add(interaction)
+            challenge_id=challenge_id
+        ).first()
+        
+        if not user_progress:
+            user_progress = UserChallengeProgress(
+                user_id=current_user_id,
+                challenge_id=challenge_id,
+                started_at=datetime.utcnow(),
+                attempts_count=1
+            )
+            db.session.add(user_progress)
+        else:
+            user_progress.attempts_count += 1
+            user_progress.last_accessed = datetime.utcnow()
+        
+        db.session.add(attempt)
         db.session.commit()
         
         return jsonify({
             'success': True,
-            'analysis': analysis,
-            'improvement_suggestions': analysis.get('improvements', [])
-        }), 200
+            'message': 'Attempt submitted successfully',
+            'attempt_id': attempt.id
+        }), 201
         
     except Exception as e:
-        current_app.logger.error(f"Error analyzing solution: {str(e)}")
-        return jsonify({'error': 'Failed to analyze solution'}), 500
+        db.session.rollback()
+        current_app.logger.error(f"Error submitting attempt: {str(e)}")
+        return jsonify({'error': 'Failed to submit attempt'}), 500
 
-@ai_bp.route('/api/ai/get-hint', methods=['POST'])
+@challenges_bp.route('/<challenge_id>/progress', methods=['GET'])
 @jwt_required()
-def get_ai_hint():
+def get_challenge_progress(challenge_id):
+    """Get user progress for a specific challenge"""
     try:
         current_user_id = get_jwt_identity()
-        data = request.get_json()
         
-        challenge_id = data.get('challenge_id')
-        current_approach = data.get('current_approach', '')
-        
-        if not challenge_id:
-            return jsonify({'error': 'Challenge ID required'}), 400
-        
-        challenge = Challenge.query.get(challenge_id)
-        if not challenge:
-            return jsonify({'error': 'Challenge not found'}), 404
-        
-        ai_service = AIService()
-        hint = ai_service.generate_hint(
-            challenge_description=challenge.description,
-            difficulty=challenge.difficulty,
-            current_approach=current_approach
-        )
-        
-        interaction = AIInteraction(
+        progress = UserChallengeProgress.query.filter_by(
             user_id=current_user_id,
-            action='get_hint',
-            input_data=json.dumps({
-                'challenge_id': challenge_id,
-                'has_approach': bool(current_approach)
-            }),
-            output_data=json.dumps({'hint': hint}),
-            model_used=ai_service.current_model
-        )
-        db.session.add(interaction)
-        db.session.commit()
+            challenge_id=challenge_id
+        ).first()
+        
+        attempts = ChallengeAttempt.query.filter_by(
+            user_id=current_user_id,
+            challenge_id=challenge_id
+        ).order_by(ChallengeAttempt.submitted_at.desc()).all()
+        
+        progress_data = {
+            'started': progress is not None,
+            'completed': progress.completed if progress else False,
+            'attempts_count': progress.attempts_count if progress else 0,
+            'started_at': progress.started_at.isoformat() if progress and progress.started_at else None,
+            'completed_at': progress.completed_at.isoformat() if progress and progress.completed_at else None,
+            'recent_attempts': [attempt.to_dict() for attempt in attempts[:5]]  # Last 5 attempts
+        }
         
         return jsonify({
             'success': True,
-            'hint': hint,
-            'challenge_id': challenge_id
+            'progress': progress_data
         }), 200
         
     except Exception as e:
-        current_app.logger.error(f"Error generating hint: {str(e)}")
-        return jsonify({'error': 'Failed to generate hint'}), 500
-
-@ai_bp.route('/api/ai/interactions', methods=['GET'])
-@jwt_required()
-def get_ai_interactions():
-    try:
-        current_user_id = get_jwt_identity()
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 10, type=int)
-        
-        interactions = AIInteraction.query.filter_by(
-            user_id=current_user_id
-        ).order_by(
-            AIInteraction.created_at.desc()
-        ).paginate(
-            page=page, 
-            per_page=per_page, 
-            error_out=False
-        )
-        
-        return jsonify({
-            'success': True,
-            'interactions': [interaction.to_dict() for interaction in interactions.items],
-            'total': interactions.total,
-            'pages': interactions.pages,
-            'current_page': page
-        }), 200
-        
-    except Exception as e:
-        current_app.logger.error(f"Error fetching AI interactions: {str(e)}")
-        return jsonify({'error': 'Failed to fetch interactions'}), 500
+        current_app.logger.error(f"Error fetching challenge progress: {str(e)}")
+        return jsonify({'error': 'Failed to fetch progress'}), 500

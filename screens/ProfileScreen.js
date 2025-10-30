@@ -40,9 +40,100 @@ const sanitizeInput = (input) => {
   return input?.trim().replace(/[<>]/g, '') || '';
 };
 
+// Token management utility
+const refreshAuthToken = async () => {
+  try {
+    const refreshToken = await AsyncStorage.getItem('refresh_token');
+    if (!refreshToken) {
+      throw new Error('No refresh token available');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      await AsyncStorage.setItem('access_token', data.access_token);
+      if (data.refresh_token) {
+        await AsyncStorage.setItem('refresh_token', data.refresh_token);
+      }
+      return data.access_token;
+    } else {
+      throw new Error('Token refresh failed');
+    }
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    throw error;
+  }
+};
+
+const getValidAuthHeaders = async () => {
+  try {
+    let token = await AsyncStorage.getItem('access_token');
+    
+    if (!token) {
+      throw new Error('No access token available');
+    }
+    
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    };
+  } catch (error) {
+    console.error('Failed to get valid auth headers:', error);
+    throw new Error('Authentication required');
+  }
+};
+
+const makeAuthenticatedRequest = async (url, options = {}) => {
+  try {
+    let headers = await getValidAuthHeaders();
+    
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        ...headers,
+        ...options.headers,
+      },
+    });
+
+    // If token is expired, try to refresh and retry
+    if (response.status === 401) {
+      console.log('Token expired, attempting refresh...');
+      const newToken = await refreshAuthToken();
+      
+      // Retry with new token
+      const retryResponse = await fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers,
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${newToken}`,
+        },
+      });
+
+      if (retryResponse.ok) {
+        return retryResponse;
+      } else {
+        throw new Error('Authentication failed after refresh');
+      }
+    }
+
+    return response;
+  } catch (error) {
+    console.error('Authenticated request failed:', error);
+    throw error;
+  }
+};
+
 const ProfileScreen = ({ navigation }) => {
   const [activeTab, setActiveTab] = useState('profile');
-  const [userData, setUserData] = useState(null); // Start as null instead of empty object
+  const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -63,6 +154,7 @@ const ProfileScreen = ({ navigation }) => {
   });
   const [isOnline, setIsOnline] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
+  const [authError, setAuthError] = useState(false);
 
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -117,22 +209,22 @@ const ProfileScreen = ({ navigation }) => {
 
   const getUserGrade = useCallback(() => {
     if (!userData) return '';
-    return userData.grade || userData.profile?.grade_level || '';
+    return userData.grade_level || userData.grade || '';
   }, [userData]);
 
   const getUserSchool = useCallback(() => {
     if (!userData) return '';
-    return userData.school || userData.profile?.school || '';
+    return userData.school || '';
   }, [userData]);
 
   const getUserBio = useCallback(() => {
     if (!userData) return 'Tell us about yourself...';
-    return userData.bio || userData.profile?.bio || 'Tell us about yourself...';
+    return userData.bio || 'Tell us about yourself...';
   }, [userData]);
 
   const getUserAvatar = useCallback(() => {
     if (!userData) return '';
-    return userData.avatar || userData.profile?.avatar_url || '';
+    return userData.avatar_url || userData.profile_picture || userData.avatar || '';
   }, [userData]);
 
   const getUserPreferences = useCallback(() => {
@@ -142,7 +234,7 @@ const ProfileScreen = ({ navigation }) => {
 
   const getUserPoints = useCallback(() => {
     if (!userData) return 0;
-    return userData.points || 0;
+    return userData.points || userData.total_points || 0;
   }, [userData]);
 
   const getUserLevel = useCallback(() => {
@@ -152,30 +244,8 @@ const ProfileScreen = ({ navigation }) => {
 
   const getUserStreak = useCallback(() => {
     if (!userData) return 0;
-    return userData.streak || 0;
+    return userData.streak_days || userData.streak || 0;
   }, [userData]);
-
-  // API utility functions
-  const getAuthHeaders = async () => {
-    const token = await AsyncStorage.getItem('access_token');
-    return {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    };
-  };
-
-  const handleApiError = (error, defaultMessage = 'An error occurred') => {
-    console.error('API Error:', error);
-    if (error.message === 'Token expired' || error.message === 'Invalid token') {
-      Alert.alert('Session Expired', 'Please log in again.');
-      navigation.reset({ 
-        index: 0, 
-        routes: [{ name: 'SignIn' }] 
-      });
-      return;
-    }
-    throw new Error(error.message || defaultMessage);
-  };
 
   const fetchUserData = async (retry = false) => {
     if (!isOnline && !retry) {
@@ -187,39 +257,38 @@ const ProfileScreen = ({ navigation }) => {
     try {
       setLoading(true);
       setOperationLoading(prev => ({ ...prev, fetching: true }));
+      setAuthError(false);
       
-      const headers = await getAuthHeaders();
-      const response = await fetch(`${API_BASE_URL}/auth/me`, {
+      const response = await makeAuthenticatedRequest(`${API_BASE_URL}/auth/me`, {
         method: 'GET',
-        headers: headers,
       });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const userDataResponse = await response.json();
+      console.log('User data received:', userDataResponse);
 
       // Transform backend data to match frontend structure
       const transformedData = {
-        ...data,
-        avatar: data.profile?.avatar_url || '',
-        name: `${data.first_name || ''} ${data.last_name || ''}`.trim() || 'User',
-        email: data.email || '',
-        grade: data.profile?.grade_level || '',
-        school: data.profile?.school || '',
-        joinDate: data.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
-        level: 'Beginner',
-        points: 0,
-        streak: 0,
-        bio: data.profile?.bio || 'Tell us about yourself...',
-        socialLinks: data.profile?.social_links || { instagram: '', twitter: '' },
-        preferences: data.preferences || { notifications: true, darkMode: false, privateProfile: false },
+        ...userDataResponse.user,
+        name: `${userDataResponse.user?.first_name || ''} ${userDataResponse.user?.last_name || ''}`.trim() || 'User',
+        email: userDataResponse.user?.email || '',
+        avatar_url: userDataResponse.user?.profile_picture || userDataResponse.user?.avatar_url || '',
+        grade_level: userDataResponse.user?.grade_level || '',
+        school: userDataResponse.user?.school || '',
+        bio: userDataResponse.user?.bio || 'Tell us about yourself...',
+        points: userDataResponse.user?.points || userDataResponse.user?.total_points || 0,
+        level: userDataResponse.user?.level || 'Beginner',
+        streak_days: userDataResponse.user?.streak_days || userDataResponse.user?.streak || 0,
+        join_date: userDataResponse.user?.created_at?.split('T')[0] || userDataResponse.user?.join_date || new Date().toISOString().split('T')[0],
+        preferences: userDataResponse.user?.preferences || { notifications: true, darkMode: false, privateProfile: false }
       };
 
       setUserData(transformedData);
       
-      // Fetch additional data
+      // Fetch additional data from respective endpoints
       await Promise.all([
         fetchAchievements(),
         fetchStudyStats(),
@@ -230,13 +299,19 @@ const ProfileScreen = ({ navigation }) => {
     } catch (error) {
       console.error('Error fetching user data:', error);
       
-      if (retryCount < 3) {
+      if (error.message.includes('Authentication') || error.message.includes('401') || error.message.includes('token')) {
+        setAuthError(true);
+        await AsyncStorage.multiRemove(['access_token', 'refresh_token']);
+        return;
+      }
+      
+      if (retryCount < 2) {
         setRetryCount(prev => prev + 1);
         setTimeout(() => fetchUserData(true), 2000 * retryCount);
       } else {
         Alert.alert(
           'Connection Error', 
-          'Failed to load profile data. Please check if your backend is running on 127.0.0.1:5000',
+          'Failed to load profile data. Please check your connection.',
           [{ text: 'Retry', onPress: () => {
             setRetryCount(0);
             fetchUserData();
@@ -251,57 +326,73 @@ const ProfileScreen = ({ navigation }) => {
 
   const fetchAchievements = async () => {
     try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(`${API_BASE_URL}/achievements`, {
+      const response = await makeAuthenticatedRequest(`${API_BASE_URL}/progress/achievements`, {
         method: 'GET',
-        headers: headers,
       });
 
       if (response.ok) {
         const data = await response.json();
-        setAchievements(data.achievements || []);
+        setAchievements(data.achievements || data.data || []);
+      } else {
+        console.log('Achievements endpoint not available');
+        setAchievements([]);
       }
     } catch (error) {
       console.error('Error fetching achievements:', error);
+      setAchievements([]);
     }
   };
 
   const fetchStudyStats = async () => {
     try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(`${API_BASE_URL}/study-stats`, {
+      const response = await makeAuthenticatedRequest(`${API_BASE_URL}/progress/stats`, {
         method: 'GET',
-        headers: headers,
       });
 
       if (response.ok) {
         const data = await response.json();
         setStudyStats({
-          totalStudyTime: data.total_study_time || 0,
-          completedLessons: data.completed_lessons || 0,
+          totalStudyTime: data.total_study_time || data.study_time || 0,
+          completedLessons: data.completed_lessons || data.lessons_completed || 0,
           gamesPlayed: data.games_played || 0,
           quizzesCompleted: data.quizzes_completed || 0
+        });
+      } else {
+        console.log('Stats endpoint not available');
+        setStudyStats({
+          totalStudyTime: 0,
+          completedLessons: 0,
+          gamesPlayed: 0,
+          quizzesCompleted: 0
         });
       }
     } catch (error) {
       console.error('Error fetching study stats:', error);
+      setStudyStats({
+        totalStudyTime: 0,
+        completedLessons: 0,
+        gamesPlayed: 0,
+        quizzesCompleted: 0
+      });
     }
   };
 
   const fetchRecentActivity = async () => {
     try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(`${API_BASE_URL}/recent-activity`, {
+      const response = await makeAuthenticatedRequest(`${API_BASE_URL}/dashboard/recent-activity`, {
         method: 'GET',
-        headers: headers,
       });
 
       if (response.ok) {
         const data = await response.json();
-        setRecentActivity(data.activities || []);
+        setRecentActivity(data.activities || data.recent_activity || []);
+      } else {
+        console.log('Recent activity endpoint not available');
+        setRecentActivity([]);
       }
     } catch (error) {
       console.error('Error fetching recent activity:', error);
+      setRecentActivity([]);
     }
   };
 
@@ -311,18 +402,6 @@ const ProfileScreen = ({ navigation }) => {
     
     setUserData(prev => {
       if (!prev) return null;
-      
-      if (field.includes('.')) {
-        const [parent, child] = field.split('.');
-        return {
-          ...prev,
-          [parent]: {
-            ...prev[parent],
-            [child]: value
-          }
-        };
-      }
-      
       return {
         ...prev,
         [field]: value
@@ -378,45 +457,71 @@ const ProfileScreen = ({ navigation }) => {
       setUploading(true);
       setOperationLoading(prev => ({ ...prev, uploading: true }));
       
+      const token = await AsyncStorage.getItem('access_token');
+      if (!token) {
+        throw new Error('No authentication token');
+      }
+      
       const formData = new FormData();
-      formData.append('avatar', {
+      formData.append('profile_picture', {
         uri: uri,
         type: 'image/jpeg',
-        name: 'avatar.jpg',
+        name: 'profile_picture.jpg',
       });
 
-      const token = await AsyncStorage.getItem('access_token');
-      const response = await fetch(`${API_BASE_URL}/profile/avatar`, {
+      const response = await fetch(`${API_BASE_URL}/profile/upload-picture`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'multipart/form-data',
           'Authorization': `Bearer ${token}`,
         },
         body: formData,
       });
 
-      if (!response.ok) {
+      if (response.status === 401) {
+        // Token expired, refresh and retry
+        const newToken = await refreshAuthToken();
+        const retryResponse = await fetch(`${API_BASE_URL}/profile/upload-picture`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${newToken}`,
+          },
+          body: formData,
+        });
+
+        if (!retryResponse.ok) {
+          throw new Error(`Upload failed: ${retryResponse.status}`);
+        }
+
+        const data = await retryResponse.json();
+        handleUploadSuccess(data);
+      } else if (!response.ok) {
         throw new Error(`Upload failed: ${response.status}`);
+      } else {
+        const data = await response.json();
+        handleUploadSuccess(data);
       }
-
-      const data = await response.json();
-      
-      setUserData(prev => {
-        if (!prev) return null;
-        return { 
-          ...prev, 
-          avatar: data.avatar_url 
-        };
-      });
-
-      Alert.alert('Success', 'Profile picture updated successfully!');
     } catch (error) {
       console.error('Error uploading image:', error);
-      Alert.alert('Upload Failed', 'Failed to upload profile picture. Please try again.');
+      if (error.message.includes('Authentication') || error.message.includes('401')) {
+        Alert.alert('Session Expired', 'Please sign in again to upload images.');
+      } else {
+        Alert.alert('Upload Failed', 'Failed to upload profile picture. Please try again.');
+      }
     } finally {
       setUploading(false);
       setOperationLoading(prev => ({ ...prev, uploading: false }));
     }
+  };
+
+  const handleUploadSuccess = (data) => {
+    setUserData(prev => {
+      if (!prev) return null;
+      return { 
+        ...prev, 
+        avatar_url: data.profile_picture_url || data.avatar_url || data.image_url 
+      };
+    });
+    Alert.alert('Success', 'Profile picture updated successfully!');
   };
 
   const handleSaveProfile = async () => {
@@ -438,8 +543,6 @@ const ProfileScreen = ({ navigation }) => {
     try {
       setOperationLoading(prev => ({ ...prev, saving: true }));
       
-      const headers = await getAuthHeaders();
-      
       const nameParts = getUserName().trim().split(' ');
       const firstName = nameParts[0] || '';
       const lastName = nameParts.slice(1).join(' ') || '';
@@ -448,25 +551,19 @@ const ProfileScreen = ({ navigation }) => {
         first_name: sanitizeInput(firstName),
         last_name: sanitizeInput(lastName),
         email: sanitizeInput(getUserEmail()),
-        profile: {
-          grade_level: sanitizeInput(getUserGrade()),
-          school: sanitizeInput(getUserSchool()),
-          bio: sanitizeInput(getUserBio()),
-          social_links: {
-            instagram: sanitizeInput(userData?.socialLinks?.instagram || ''),
-            twitter: sanitizeInput(userData?.socialLinks?.twitter || '')
-          }
-        }
+        grade_level: sanitizeInput(getUserGrade()),
+        school: sanitizeInput(getUserSchool()),
+        bio: sanitizeInput(getUserBio())
       };
 
-      const response = await fetch(`${API_BASE_URL}/profile`, {
+      const response = await makeAuthenticatedRequest(`${API_BASE_URL}/profile/update`, {
         method: 'PUT',
-        headers: headers,
         body: JSON.stringify(updateData),
       });
 
       if (!response.ok) {
-        throw new Error(`Update failed: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Update failed: ${response.status}`);
       }
 
       const data = await response.json();
@@ -477,7 +574,11 @@ const ProfileScreen = ({ navigation }) => {
       fetchUserData();
     } catch (error) {
       console.error('Error saving profile:', error);
-      Alert.alert('Save Failed', 'Failed to save profile data. Please try again.');
+      if (error.message.includes('Authentication') || error.message.includes('401')) {
+        Alert.alert('Session Expired', 'Please sign in again to save changes.');
+      } else {
+        Alert.alert('Save Failed', error.message || 'Failed to save profile data. Please try again.');
+      }
     } finally {
       setOperationLoading(prev => ({ ...prev, saving: false }));
     }
@@ -492,24 +593,14 @@ const ProfileScreen = ({ navigation }) => {
         return { ...prev, preferences: updatedPreferences };
       });
       
-      const headers = await getAuthHeaders();
-      const response = await fetch(`${API_BASE_URL}/profile/preferences`, {
-        method: 'PUT',
-        headers: headers,
-        body: JSON.stringify({ preferences: updatedPreferences }),
-      });
-
-      if (!response.ok) {
-        console.error('Failed to update preferences on server');
-        // Revert on error
-        setUserData(prev => {
-          if (!prev) return null;
-          return { ...prev, preferences: getUserPreferences() };
+      if (isOnline) {
+        await makeAuthenticatedRequest(`${API_BASE_URL}/profile/preferences`, {
+          method: 'PUT',
+          body: JSON.stringify({ preferences: updatedPreferences }),
         });
       }
     } catch (error) {
       console.error('Error updating preferences:', error);
-      // Revert on error
       setUserData(prev => {
         if (!prev) return null;
         return { ...prev, preferences: getUserPreferences() };
@@ -517,7 +608,7 @@ const ProfileScreen = ({ navigation }) => {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     Alert.alert(
       'Log Out',
       'Are you sure you want to log out?',
@@ -528,21 +619,14 @@ const ProfileScreen = ({ navigation }) => {
           style: 'destructive',
           onPress: async () => {
             try {
-              const headers = await getAuthHeaders();
-              await fetch(`${API_BASE_URL}/auth/logout`, {
-                method: 'POST',
-                headers: headers,
-              });
-              
-              await AsyncStorage.multiRemove(['access_token', 'refresh_token']);
-              
+              await AsyncStorage.multiRemove(['access_token', 'refresh_token', 'user_data']);
               navigation.reset({ 
                 index: 0, 
                 routes: [{ name: 'WelcomeScreen' }] 
               });
             } catch (error) {
               console.error('Error signing out:', error);
-              await AsyncStorage.multiRemove(['access_token', 'refresh_token']);
+              await AsyncStorage.multiRemove(['access_token', 'refresh_token', 'user_data']);
               navigation.reset({ 
                 index: 0, 
                 routes: [{ name: 'WelcomeScreen' }] 
@@ -610,7 +694,16 @@ const ProfileScreen = ({ navigation }) => {
     return icons[type] || 'checkmark-circle';
   }, []);
 
-  // Safe render functions
+  // Render functions
+  const renderOfflineBanner = () => (
+    !isOnline && (
+      <View style={styles.offlineBanner}>
+        <Ionicons name="cloud-offline" size={16} color="#fff" />
+        <Text style={styles.offlineBannerText}>You're offline - some features limited</Text>
+      </View>
+    )
+  );
+
   const renderAnimatedHeader = () => (
     <View style={styles.header}>
       <LinearGradient 
@@ -619,6 +712,7 @@ const ProfileScreen = ({ navigation }) => {
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
       >
+        {renderOfflineBanner()}
         <View style={styles.headerContent}>
           <View style={styles.avatarSection}>
             <View style={styles.avatarContainer}>
@@ -695,9 +789,216 @@ const ProfileScreen = ({ navigation }) => {
     </View>
   );
 
-  // ... rest of your render functions remain the same, but use the safe accessors
+  const renderStatsCard = () => (
+    <Animated.View 
+      style={[
+        styles.statsCard,
+        {
+          opacity: fadeAnim,
+          transform: [{ translateY: slideAnim }]
+        }
+      ]}
+    >
+      <View style={styles.statsTabs}>
+        {['overview', 'achievements', 'activity'].map((tab) => (
+          <TouchableOpacity
+            key={tab}
+            style={[
+              styles.statTab,
+              activeStat === tab && styles.activeStatTab
+            ]}
+            onPress={() => setActiveStat(tab)}
+          >
+            <Text style={[
+              styles.statTabText,
+              activeStat === tab && styles.activeStatTabText
+            ]}>
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
-  // Update the settings modal form inputs to use safe accessors
+      <View style={styles.statsContent}>
+        {activeStat === 'overview' && renderOverviewStats()}
+        {activeStat === 'achievements' && renderAchievements()}
+        {activeStat === 'activity' && renderRecentActivity()}
+      </View>
+    </Animated.View>
+  );
+
+  const renderOverviewStats = () => (
+    <View>
+      <View style={styles.statsGrid}>
+        <View style={styles.statItem}>
+          <LinearGradient
+            colors={['#6a11cb', '#2575fc']}
+            style={styles.statIcon}
+          >
+            <Ionicons name="time" size={24} color="white" />
+          </LinearGradient>
+          <Text style={styles.statValue}>{studyStats.totalStudyTime}h</Text>
+          <Text style={styles.statLabel}>Study Time</Text>
+        </View>
+        
+        <View style={styles.statItem}>
+          <LinearGradient
+            colors={['#2af598', '#009efd']}
+            style={styles.statIcon}
+          >
+            <Ionicons name="trophy" size={24} color="white" />
+          </LinearGradient>
+          <Text style={styles.statValue}>{getUserStreak()}</Text>
+          <Text style={styles.statLabel}>Day Streak</Text>
+        </View>
+        
+        <View style={styles.statItem}>
+          <LinearGradient
+            colors={['#ff6b6b', '#ffa726']}
+            style={styles.statIcon}
+          >
+            <Ionicons name="game-controller" size={24} color="white" />
+          </LinearGradient>
+          <Text style={styles.statValue}>{studyStats.gamesPlayed}</Text>
+          <Text style={styles.statLabel}>Games</Text>
+        </View>
+      </View>
+
+      <View style={styles.studyStats}>
+        <Text style={styles.studyStatsTitle}>Learning Progress</Text>
+        <View style={styles.studyStatsGrid}>
+          <View style={styles.studyStat}>
+            <Ionicons name="book" size={24} color="#6a11cb" />
+            <Text style={styles.studyStatValue}>{studyStats.completedLessons}</Text>
+            <Text style={styles.studyStatLabel}>Lessons</Text>
+          </View>
+          
+          <View style={styles.studyStat}>
+            <Ionicons name="help-circle" size={24} color="#2575fc" />
+            <Text style={styles.studyStatValue}>{studyStats.quizzesCompleted}</Text>
+            <Text style={styles.studyStatLabel}>Quizzes</Text>
+          </View>
+          
+          <View style={styles.studyStat}>
+            <Ionicons name="star" size={24} color="#2af598" />
+            <Text style={styles.studyStatValue}>{achievements.length}</Text>
+            <Text style={styles.studyStatLabel}>Achievements</Text>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+
+  const renderAchievements = () => (
+    <View style={styles.achievementsContent}>
+      {achievements.length > 0 ? (
+        <ScrollView style={styles.achievementsList}>
+          {achievements.map((achievement, index) => (
+            <View key={index} style={styles.achievementItem}>
+              <View style={styles.achievementIcon}>
+                <Ionicons name="medal" size={24} color="#FFD700" />
+              </View>
+              <View style={styles.achievementInfo}>
+                <Text style={styles.achievementTitle}>{achievement.name}</Text>
+                <Text style={styles.achievementDescription}>{achievement.description}</Text>
+                <Text style={styles.achievementDate}>Earned {achievement.earned_date}</Text>
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+      ) : (
+        <View style={styles.emptySection}>
+          <Ionicons name="trophy-outline" size={64} color="#ccc" />
+          <Text style={styles.emptySectionTitle}>No Achievements Yet</Text>
+          <Text style={styles.emptySectionText}>
+            Complete lessons and games to earn achievements!
+          </Text>
+          <TouchableOpacity 
+            style={styles.ctaButton}
+            onPress={() => handleQuickAction('games')}
+          >
+            <Text style={styles.ctaButtonText}>Start Learning</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+
+  const renderRecentActivity = () => (
+    <View style={styles.activityContent}>
+      {recentActivity.length > 0 ? (
+        <ScrollView style={styles.activityList}>
+          {recentActivity.map((activity, index) => (
+            <View key={index} style={styles.activityItem}>
+              <View style={styles.activityIcon}>
+                <Ionicons name={getActivityIcon(activity.type)} size={20} color="#6a11cb" />
+              </View>
+              <View style={styles.activityInfo}>
+                <Text style={styles.activityTitle}>{activity.title}</Text>
+                <Text style={styles.activityDescription}>{activity.description}</Text>
+                <Text style={styles.activityTime}>{activity.timestamp}</Text>
+              </View>
+              {activity.points && (
+                <View style={styles.activityPoints}>
+                  <Text style={styles.pointsText}>+{activity.points} XP</Text>
+                </View>
+              )}
+            </View>
+          ))}
+        </ScrollView>
+      ) : (
+        <View style={styles.emptySection}>
+          <Ionicons name="time-outline" size={64} color="#ccc" />
+          <Text style={styles.emptySectionTitle}>No Recent Activity</Text>
+          <Text style={styles.emptySectionText}>
+            Your learning activities will appear here
+          </Text>
+          <TouchableOpacity 
+            style={styles.ctaButton}
+            onPress={() => handleQuickAction('lessons')}
+          >
+            <Text style={styles.ctaButtonText}>Start Learning</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+
+  const renderQuickActions = () => (
+    <View style={styles.quickActions}>
+      {[
+        { icon: 'trending-up', label: 'Progress', action: 'progress' },
+        { icon: 'trophy', label: 'Achievements', action: 'achievements' },
+        { icon: 'game-controller', label: 'Games', action: 'games' },
+        { icon: 'book', label: 'Lessons', action: 'lessons' },
+        { icon: 'flag', label: 'Challenges', action: 'challenges' }
+      ].map((item, index) => (
+        <TouchableOpacity
+          key={index}
+          style={styles.quickAction}
+          onPress={() => handleQuickAction(item.action)}
+          disabled={!isOnline && ['games', 'lessons', 'challenges'].includes(item.action)}
+        >
+          <LinearGradient
+            colors={['#6a11cb', '#2575fc']}
+            style={[
+              styles.quickActionIcon,
+              !isOnline && ['games', 'lessons', 'challenges'].includes(item.action) && styles.disabledGradient
+            ]}
+          >
+            <Ionicons name={item.icon} size={20} color="white" />
+          </LinearGradient>
+          <Text style={[
+            styles.quickActionText,
+            !isOnline && ['games', 'lessons', 'challenges'].includes(item.action) && styles.disabledText
+          ]}>
+            {item.label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
   const renderSettingsModal = () => (
     <Modal
       visible={showSettingsModal}
@@ -744,7 +1045,7 @@ const ProfileScreen = ({ navigation }) => {
               <TextInput
                 style={styles.formInput}
                 value={getUserGrade()}
-                onChangeText={(value) => handleInputChange('grade', value)}
+                onChangeText={(value) => handleInputChange('grade_level', value)}
                 placeholder="Enter your grade"
               />
             </View>
@@ -815,11 +1116,74 @@ const ProfileScreen = ({ navigation }) => {
             </View>
           </View>
 
-          {/* ... rest of modal content */}
+          <View style={styles.settingsSection}>
+            <Text style={styles.settingsSectionTitle}>Account</Text>
+            
+            <TouchableOpacity 
+              style={[styles.dataActionButton, !isOnline && styles.disabledButton]}
+              onPress={() => Alert.alert('Export Data', 'This feature will export all your learning data.')}
+              disabled={!isOnline}
+            >
+              <Ionicons name="download" size={20} color="#6a11cb" />
+              <Text style={styles.dataActionText}>Export Learning Data</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.dataActionButton, !isOnline && styles.disabledButton]}
+              onPress={() => Alert.alert('Delete Account', 'This will permanently delete your account and all data.')}
+              disabled={!isOnline}
+            >
+              <Ionicons name="trash" size={20} color="#ff6b6b" />
+              <Text style={[styles.dataActionText, { color: '#ff6b6b' }]}>Delete Account</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.saveButton, styles.logoutButton]}
+              onPress={handleLogout}
+            >
+              <Ionicons name="log-out" size={20} color="white" />
+              <Text style={styles.saveButtonText}>Log Out</Text>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
+
+        <View style={styles.modalFooter}>
+          <TouchableOpacity 
+            style={[styles.saveButton, operationLoading.saving && styles.disabledButton]}
+            onPress={handleSaveProfile}
+            disabled={operationLoading.saving}
+          >
+            {operationLoading.saving ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <Text style={styles.saveButtonText}>Save Changes</Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
     </Modal>
   );
+
+  // Auth error screen
+  if (authError) {
+    return (
+      <LayoutWithNavigation navigation={navigation} activeTab={activeTab}>
+        <View style={styles.authErrorContainer}>
+          <Ionicons name="lock-closed" size={64} color="#6a11cb" />
+          <Text style={styles.authErrorTitle}>Session Expired</Text>
+          <Text style={styles.authErrorText}>
+            Your session has expired. Please sign in again to continue.
+          </Text>
+          <TouchableOpacity 
+            style={styles.authErrorButton}
+            onPress={() => navigation.navigate('SignInScreen')}
+          >
+            <Text style={styles.authErrorButtonText}>Sign In</Text>
+          </TouchableOpacity>
+        </View>
+      </LayoutWithNavigation>
+    );
+  }
 
   if (loading) {
     return (
@@ -874,6 +1238,9 @@ const styles = StyleSheet.create({
     flex: 1, 
     backgroundColor: '#F8F9FA' 
   },
+  scrollView: {
+    flex: 1,
+  },
   scrollContent: {
     flexGrow: 1,
   },
@@ -887,6 +1254,50 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 16,
     color: '#666',
+  },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: '#6a11cb',
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  authErrorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    padding: 20,
+  },
+  authErrorTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#2D3748',
+    marginTop: 20,
+    marginBottom: 12,
+  },
+  authErrorText: {
+    fontSize: 16,
+    color: '#718096',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 30,
+  },
+  authErrorButton: {
+    backgroundColor: '#6a11cb',
+    paddingHorizontal: 30,
+    paddingVertical: 15,
+    borderRadius: 12,
+  },
+  authErrorButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
   },
   header: {
     height: 300,
@@ -1269,9 +1680,6 @@ const styles = StyleSheet.create({
   disabledGradient: {
     opacity: 0.5,
   },
-  disabledQuickAction: {
-    opacity: 0.5,
-  },
   disabledText: {
     color: '#999',
   },
@@ -1301,6 +1709,20 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
   },
+  modalFooter: {
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  settingsSection: {
+    marginBottom: 24,
+  },
+  settingsSectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 16,
+  },
   formGroup: {
     marginBottom: 24,
   },
@@ -1322,32 +1744,6 @@ const styles = StyleSheet.create({
   bioTextArea: {
     height: 80,
     textAlignVertical: 'top',
-  },
-  saveButton: {
-    backgroundColor: '#6a11cb',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  logoutButton: {
-    backgroundColor: '#ff6b6b',
-    flexDirection: 'row',
-    gap: 8,
-  },
-  saveButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  settingsSection: {
-    marginBottom: 24,
-  },
-  settingsSectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 16,
   },
   settingItem: {
     flexDirection: 'row',
@@ -1380,8 +1776,40 @@ const styles = StyleSheet.create({
     color: '#6a11cb',
     fontWeight: '600',
   },
+  saveButton: {
+    backgroundColor: '#6a11cb',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  logoutButton: {
+    backgroundColor: '#ff6b6b',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  saveButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   bottomSpace: {
     height: 20,
+  },
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 107, 107, 0.9)',
+    padding: 8,
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 10,
+    borderRadius: 8,
+    marginHorizontal: 10,
+  },
+  offlineBannerText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
 

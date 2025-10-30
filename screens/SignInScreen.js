@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'; // Added useRef
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -28,18 +28,33 @@ export default function SignInScreen() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [errors, setErrors] = useState({}); // Added for error handling
+  const [errors, setErrors] = useState({});
   
-  // FIX: Use useRef for animated values to prevent recreation on re-render
+  // Enhanced animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideUpAnim = useRef(new Animated.Value(30)).current;
+  const scaleAnim = useRef(new Animated.Value(0.9)).current;
 
   useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 800,
-      useNativeDriver: true,
-    }).start();
-  }, [fadeAnim]); // Added dependency
+    // Staggered animations for better visual appeal
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 800,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideUpAnim, {
+        toValue: 0,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 1,
+        duration: 700,
+        useNativeDriver: true,
+      })
+    ]).start();
+  }, [fadeAnim, slideUpAnim, scaleAnim]);
 
   // Store tokens in AsyncStorage
   const storeTokens = async (accessToken, refreshToken) => {
@@ -51,7 +66,6 @@ export default function SignInScreen() {
     }
   };
 
-  // FIX: Added proper form validation function
   const validateForm = () => {
     const newErrors = {};
     
@@ -72,7 +86,6 @@ export default function SignInScreen() {
   };
 
   const handleSignIn = async () => {
-    // FIX: Use validation function instead of inline checks
     if (!validateForm()) {
       return;
     }
@@ -94,22 +107,14 @@ export default function SignInScreen() {
       const data = await response.json();
 
       if (response.ok) {
-        // Store tokens
         await storeTokens(data.access_token, data.refresh_token);
-        
         console.log('User signed in:', data.user?.id);
-        
-        // FIX: Ensure loading state is reset before navigation
         setIsLoading(false);
-        
-        // Navigate to HomeScreen
         navigation.navigate('HomeScreen');
-        
       } else {
         setIsLoading(false);
         let errorMessage = 'Failed to sign in. Please try again.';
         
-        // Handle specific error cases
         if (data.error) {
           errorMessage = data.error;
         }
@@ -139,11 +144,9 @@ export default function SignInScreen() {
     setShowPassword(!showPassword);
   };
 
-  // FIX: Improved forgot password with better error handling
   const handleForgotPassword = () => {
     if (!email) {
       Alert.alert('Email Required', 'Please enter your email address first.');
-      // FIX: Set email error
       setErrors(prev => ({ ...prev, email: 'Email is required for password reset' }));
       return;
     }
@@ -193,7 +196,6 @@ export default function SignInScreen() {
     );
   };
 
-  // FIX: Clear errors when user starts typing
   const handleEmailChange = (text) => {
     setEmail(text);
     if (errors.email) {
@@ -214,11 +216,12 @@ export default function SignInScreen() {
         colors={['#0A7C72', '#0fbfae', '#F5E27A']}
         style={styles.container}
       >
-        {/* Background Bubbles */}
+        {/* Enhanced Background Bubbles */}
         <View style={styles.bubbleContainer}>
-          <View style={[styles.bubble, styles.bubble1]} />
-          <View style={[styles.bubble, styles.bubble2]} />
-          <View style={[styles.bubble, styles.bubble3]} />
+          <Animated.View style={[styles.bubble, styles.bubble1, { opacity: fadeAnim }]} />
+          <Animated.View style={[styles.bubble, styles.bubble2, { opacity: fadeAnim }]} />
+          <Animated.View style={[styles.bubble, styles.bubble3, { opacity: fadeAnim }]} />
+          <Animated.View style={[styles.bubble, styles.bubble4, { opacity: fadeAnim }]} />
         </View>
 
         <KeyboardAvoidingView
@@ -227,37 +230,57 @@ export default function SignInScreen() {
         >
           <ScrollView 
             contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false} // FIX: Added for better UX
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
           >
-            <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
+            <Animated.View style={[
+              styles.content, 
+              { 
+                opacity: fadeAnim,
+                transform: [
+                  { translateY: slideUpAnim },
+                  { scale: scaleAnim }
+                ]
+              }
+            ]}>
               
-              {/* Header */}
+              {/* Enhanced Header */}
               <View style={styles.header}>
                 <TouchableOpacity 
                   style={styles.backButton}
                   onPress={() => navigation.goBack()}
+                  activeOpacity={0.7}
                 >
                   <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
                   <Text style={styles.backButtonText}>Back</Text>
                 </TouchableOpacity>
-                <Text style={[styles.title, isSmallDevice && styles.titleSmall]}>Welcome Back</Text>
+                <Text style={[styles.title, isSmallDevice && styles.titleSmall]}>
+                  Welcome Back! 👋
+                </Text>
                 <Text style={[styles.subtitle, isSmallDevice && styles.subtitleSmall]}>
                   Sign in to continue your learning journey
                 </Text>
               </View>
 
-              {/* Form Card */}
-              <View style={[styles.formCard, isSmallDevice && styles.formCardSmall]}>
+              {/* Enhanced Form Card */}
+              <Animated.View style={[
+                styles.formCard, 
+                isSmallDevice && styles.formCardSmall,
+                {
+                  transform: [{ scale: scaleAnim }]
+                }
+              ]}>
                 
                 {/* Email Input */}
                 <View style={styles.inputWrapper}>
+                  <Text style={styles.inputLabel}>Email Address</Text>
                   <View style={[styles.inputContainer, errors.email && styles.inputError]}>
                     <Ionicons name="mail-outline" size={20} color="#8E8E93" style={styles.inputIcon} />
                     <TextInput
-                      placeholder="Email address"
+                      placeholder="Enter your email"
                       placeholderTextColor="#8E8E93"
                       value={email}
-                      onChangeText={handleEmailChange} // FIX: Use new handler
+                      onChangeText={handleEmailChange}
                       style={styles.input}
                       autoCapitalize="none"
                       keyboardType="email-address"
@@ -266,18 +289,24 @@ export default function SignInScreen() {
                       editable={!isLoading}
                     />
                   </View>
-                  {errors.email ? <Text style={styles.errorText}>{errors.email}</Text> : null}
+                  {errors.email ? (
+                    <View style={styles.errorContainer}>
+                      <Ionicons name="warning-outline" size={14} color="#FF6B6B" />
+                      <Text style={styles.errorText}>{errors.email}</Text>
+                    </View>
+                  ) : null}
                 </View>
 
                 {/* Password Input */}
                 <View style={styles.inputWrapper}>
+                  <Text style={styles.inputLabel}>Password</Text>
                   <View style={[styles.inputContainer, errors.password && styles.inputError]}>
                     <Ionicons name="lock-closed-outline" size={20} color="#8E8E93" style={styles.inputIcon} />
                     <TextInput
-                      placeholder="Password"
+                      placeholder="Enter your password"
                       placeholderTextColor="#8E8E93"
                       value={password}
-                      onChangeText={handlePasswordChange} // FIX: Use new handler
+                      onChangeText={handlePasswordChange}
                       secureTextEntry={!showPassword}
                       style={styles.input}
                       autoComplete="password"
@@ -290,6 +319,8 @@ export default function SignInScreen() {
                     <TouchableOpacity 
                       onPress={togglePasswordVisibility}
                       disabled={isLoading}
+                      style={styles.eyeButton}
+                      activeOpacity={0.7}
                     >
                       <Ionicons 
                         name={showPassword ? "eye-off-outline" : "eye-outline"} 
@@ -298,7 +329,12 @@ export default function SignInScreen() {
                       />
                     </TouchableOpacity>
                   </View>
-                  {errors.password ? <Text style={styles.errorText}>{errors.password}</Text> : null}
+                  {errors.password ? (
+                    <View style={styles.errorContainer}>
+                      <Ionicons name="warning-outline" size={14} color="#FF6B6B" />
+                      <Text style={styles.errorText}>{errors.password}</Text>
+                    </View>
+                  ) : null}
                 </View>
 
                 {/* Forgot Password */}
@@ -306,75 +342,88 @@ export default function SignInScreen() {
                   style={styles.forgotPassword}
                   onPress={handleForgotPassword}
                   disabled={isLoading}
+                  activeOpacity={0.7}
                 >
                   <Text style={styles.forgotPasswordText}>Forgot password?</Text>
                 </TouchableOpacity>
 
-                {/* Sign In Button */}
+                {/* Enhanced Sign In Button */}
                 <TouchableOpacity 
                   style={[styles.signInButton, isLoading && styles.signInButtonDisabled]}
                   onPress={handleSignIn}
                   disabled={isLoading}
-                  activeOpacity={0.8}
+                  activeOpacity={0.9}
                 >
                   <LinearGradient
-                    colors={['#0A7C72', '#0fbfae']}
+                    colors={isLoading ? ['#8E8E93', '#8E8E93'] : ['#0A7C72', '#0fbfae']}
                     style={styles.signInGradient}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                   >
                     {isLoading ? (
-                      <Ionicons name="refresh" size={20} color="#FFFFFF" />
+                      <View style={styles.loadingContainer}>
+                        <Ionicons name="refresh" size={20} color="#FFFFFF" style={styles.loadingIcon} />
+                        <Text style={styles.signInButtonText}>Signing In...</Text>
+                      </View>
                     ) : (
-                      <>
+                      <View style={styles.buttonContent}>
                         <Text style={styles.signInButtonText}>Sign In</Text>
                         <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
-                      </>
+                      </View>
                     )}
                   </LinearGradient>
                 </TouchableOpacity>
-              </View>
+              </Animated.View>
 
-              {/* Divider */}
+              {/* Enhanced Divider */}
               <View style={styles.divider}>
                 <View style={styles.dividerLine} />
                 <Text style={styles.dividerText}>or continue with</Text>
                 <View style={styles.dividerLine} />
               </View>
 
-              {/* Social Sign In */}
+              {/* Enhanced Social Sign In */}
               <View style={styles.socialContainer}>
-                <TouchableOpacity 
-                  style={[styles.socialButton, isLoading && styles.socialButtonDisabled]}
-                  onPress={() => handleSocialSignIn('apple')}
-                  disabled={isLoading}
-                >
-                  <Ionicons name="logo-apple" size={24} color="#FFFFFF" />
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={[styles.socialButton, isLoading && styles.socialButtonDisabled]}
-                  onPress={() => handleSocialSignIn('google')}
-                  disabled={isLoading}
-                >
-                  <Ionicons name="logo-google" size={24} color="#FFFFFF" />
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={[styles.socialButton, isLoading && styles.socialButtonDisabled]}
-                  onPress={() => handleSocialSignIn('facebook')}
-                  disabled={isLoading}
-                >
-                  <Ionicons name="logo-facebook" size={24} color="#FFFFFF" />
-                </TouchableOpacity>
+                {['apple', 'google', 'facebook'].map((provider, index) => (
+                  <Animated.View
+                    key={provider}
+                    style={{
+                      opacity: fadeAnim,
+                      transform: [{
+                        translateY: slideUpAnim.interpolate({
+                          inputRange: [0, 30],
+                          outputRange: [0, 10 * (index + 1)]
+                        })
+                      }]
+                    }}
+                  >
+                    <TouchableOpacity 
+                      style={[styles.socialButton, isLoading && styles.socialButtonDisabled]}
+                      onPress={() => handleSocialSignIn(provider)}
+                      disabled={isLoading}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons 
+                        name={`logo-${provider}`} 
+                        size={24} 
+                        color="#FFFFFF" 
+                      />
+                    </TouchableOpacity>
+                  </Animated.View>
+                ))}
               </View>
 
-              {/* Sign Up Option */}
+              {/* Enhanced Sign Up Option */}
               <View style={styles.signUpContainer}>
                 <Text style={styles.signUpText}>Don't have an account? </Text>
                 <TouchableOpacity 
                   onPress={() => navigation.navigate('SignUpScreen')}
                   disabled={isLoading}
+                  activeOpacity={0.7}
                 >
-                  <Text style={[styles.signUpLink, isLoading && styles.signUpLinkDisabled]}>Sign Up</Text>
+                  <Text style={[styles.signUpLink, isLoading && styles.signUpLinkDisabled]}>
+                    Sign Up
+                  </Text>
                 </TouchableOpacity>
               </View>
 
@@ -389,6 +438,7 @@ export default function SignInScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+    backgroundColor: '#0A7C72',
   },
   container: {
     flex: 1,
@@ -398,11 +448,13 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    justifyContent: 'center',
   },
   content: {
     flex: 1,
     paddingHorizontal: 24,
     paddingVertical: 20,
+    justifyContent: 'center',
   },
   bubbleContainer: {
     position: 'absolute',
@@ -411,53 +463,62 @@ const styles = StyleSheet.create({
   },
   bubble: {
     position: 'absolute',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
     borderRadius: 100,
   },
   bubble1: {
-    width: 80,
-    height: 80,
-    top: '10%',
-    right: '15%',
+    width: 120,
+    height: 120,
+    top: '5%',
+    right: '10%',
   },
   bubble2: {
-    width: 60,
-    height: 60,
-    bottom: '25%',
-    left: '10%',
+    width: 80,
+    height: 80,
+    bottom: '20%',
+    left: '5%',
   },
   bubble3: {
-    width: 100,
-    height: 100,
+    width: 60,
+    height: 60,
+    top: '15%',
+    left: '20%',
+  },
+  bubble4: {
+    width: 90,
+    height: 90,
     bottom: '10%',
-    right: '20%',
+    right: '25%',
   },
   header: {
-    marginTop: 20,
     marginBottom: 40,
+    alignItems: 'center',
   },
   backButton: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 30,
     paddingVertical: 8,
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
     alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 12,
   },
   backButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
     marginLeft: 4,
   },
   title: {
-    fontSize: 34,
+    fontSize: 36,
     fontWeight: 'bold',
     color: '#FFFFFF',
     marginBottom: 8,
+    textAlign: 'center',
     textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 4,
   },
   titleSmall: {
     fontSize: 30,
@@ -465,49 +526,66 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: 'rgba(255, 255, 255, 0.9)',
+    textAlign: 'center',
     textShadowColor: 'rgba(0, 0, 0, 0.2)',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 2,
+    lineHeight: 22,
   },
   subtitleSmall: {
     fontSize: 14,
   },
   formCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    borderRadius: 25,
-    padding: 30,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 28,
+    padding: 32,
+    marginBottom: 30,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 10,
+      height: 12,
     },
-    shadowOpacity: 0.15,
-    shadowRadius: 20,
-    elevation: 15,
-    marginBottom: 30,
+    shadowOpacity: 0.25,
+    shadowRadius: 25,
+    elevation: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
   },
   formCardSmall: {
     padding: 24,
-    borderRadius: 20,
+    borderRadius: 24,
   },
   inputWrapper: {
-    marginBottom: 20,
+    marginBottom: 24,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0A7C72',
+    marginBottom: 8,
+    marginLeft: 4,
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 15,
-    paddingHorizontal: 16,
-    height: 56,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.5)',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingHorizontal: 18,
+    height: 58,
+    borderWidth: 2,
+    borderColor: 'rgba(10, 124, 114, 0.1)',
+    shadowColor: '#0A7C72',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
   },
   inputError: {
     borderColor: '#FF6B6B',
-    borderWidth: 1,
+    backgroundColor: '#FFF5F5',
   },
   inputIcon: {
     marginRight: 12,
@@ -515,76 +593,92 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 16,
-    color: '#000000',
+    color: '#1A1A1A',
     fontWeight: '500',
+  },
+  eyeButton: {
+    padding: 4,
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    marginLeft: 4,
   },
   errorText: {
     color: '#FF6B6B',
-    fontSize: 12,
-    marginTop: 4,
-    marginLeft: 8,
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    fontSize: 13,
+    fontWeight: '500',
+    marginLeft: 6,
   },
   forgotPassword: {
     alignSelf: 'flex-end',
-    marginBottom: 25,
+    marginBottom: 28,
     paddingVertical: 8,
   },
   forgotPasswordText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '500',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    color: '#0A7C72',
+    fontSize: 15,
+    fontWeight: '600',
   },
   signInButton: {
-    borderRadius: 15,
+    borderRadius: 18,
     overflow: 'hidden',
     shadowColor: '#0A7C72',
     shadowOffset: {
       width: 0,
-      height: 4,
+      height: 6,
     },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 8,
   },
   signInButtonDisabled: {
-    opacity: 0.6,
+    opacity: 0.7,
   },
   signInGradient: {
-    paddingVertical: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 24,
+  },
+  loadingContainer: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingIcon: {
+    marginRight: 8,
+  },
+  buttonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   signInButtonText: {
     color: '#FFFFFF',
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '700',
     marginRight: 8,
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
     textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
+    textShadowRadius: 2,
   },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 25,
+    marginVertical: 30,
   },
   dividerLine: {
     flex: 1,
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    height: 1.5,
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
   },
   dividerText: {
     marginHorizontal: 16,
-    color: 'rgba(255, 255, 255, 0.7)',
+    color: 'rgba(255, 255, 255, 0.8)',
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   socialContainer: {
     flexDirection: 'row',
@@ -593,22 +687,22 @@ const styles = StyleSheet.create({
     marginBottom: 30,
   },
   socialButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: 'rgba(255, 255, 255, 0.3)',
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 4,
+      height: 6,
     },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
   },
   socialButtonDisabled: {
     opacity: 0.5,
@@ -617,15 +711,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: 10,
   },
   signUpText: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 15,
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '500',
   },
   signUpLink: {
-    fontSize: 14,
+    fontSize: 15,
     color: '#FFFFFF',
-    fontWeight: '600',
+    fontWeight: '700',
     textDecorationLine: 'underline',
   },
   signUpLinkDisabled: {

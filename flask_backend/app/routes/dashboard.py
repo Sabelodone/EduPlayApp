@@ -1,9 +1,10 @@
 from flask import Blueprint, jsonify, current_app, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import User, Challenge, ChallengeAttempt, UserChallengeProgress, AIInteraction
+from app.models import User, Challenge, ChallengeAttempt, UserChallengeProgress, AIInteraction, LessonProgress, GameSession, UserActivity
 from app import db
 from datetime import datetime, timedelta
-from sqlalchemy import func
+from sqlalchemy import func, distinct
+import json
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -25,17 +26,40 @@ def get_dashboard_stats():
             completed=True
         ).count()
         
+        # Calculate recent activity (last 7 days)
+        week_ago = datetime.utcnow() - timedelta(days=7)
         recent_attempts = ChallengeAttempt.query.filter_by(
             user_id=current_user_id
         ).filter(
-            ChallengeAttempt.submitted_at >= datetime.utcnow() - timedelta(days=7)
+            ChallengeAttempt.submitted_at >= week_ago
         ).count()
         
+        # Calculate AI interactions (last 30 days)
+        month_ago = datetime.utcnow() - timedelta(days=30)
         ai_interactions = AIInteraction.query.filter_by(
             user_id=current_user_id
         ).filter(
-            AIInteraction.created_at >= datetime.utcnow() - timedelta(days=30)
+            AIInteraction.created_at >= month_ago
         ).count()
+        
+        # Calculate user level and points from activities
+        completed_lessons = LessonProgress.query.filter_by(
+            user_id=current_user_id, 
+            completed=True
+        ).count()
+        
+        completed_games = GameSession.query.filter_by(
+            user_id=current_user_id, 
+            completed=True
+        ).count()
+        
+        # Calculate total points and level
+        total_points = (
+            completed_challenges * 30 +
+            completed_lessons * 10 +
+            completed_games * 20
+        )
+        user_level = min((total_points // 100) + 1, 10)
         
         # Format stats for React Native StatsGrid component
         stats = [
@@ -53,7 +77,7 @@ def get_dashboard_stats():
             {
                 'id': '2', 
                 'title': 'Current Level', 
-                'value': str(getattr(user, 'level', 1)), 
+                'value': str(user_level), 
                 'subtitle': 'Level', 
                 'change': '+0', 
                 'gradient': ['#FFD166', '#FFB347'],
@@ -63,8 +87,8 @@ def get_dashboard_stats():
             },
             {
                 'id': '3', 
-                'title': 'Points Earned', 
-                'value': str(getattr(user, 'points', 0)), 
+                'title': 'Learning Points', 
+                'value': str(total_points), 
                 'subtitle': 'Total', 
                 'change': '+0', 
                 'gradient': ['#FF6B6B', '#EE5A52'],
@@ -75,7 +99,7 @@ def get_dashboard_stats():
             {
                 'id': '4', 
                 'title': 'Recent Activity', 
-                'value': str(recent_attempts), 
+                'value': str(recent_attempts + ai_interactions), 
                 'subtitle': 'This week', 
                 'change': '+0%', 
                 'gradient': ['#6A7FDB', '#5A6FC8'],
@@ -99,6 +123,8 @@ def get_recent_activity():
         current_user_id = get_jwt_identity()
         limit = request.args.get('limit', 5, type=int)
         
+        activities = []
+        
         # Get recent challenge attempts
         recent_attempts = ChallengeAttempt.query.filter_by(
             user_id=current_user_id
@@ -113,63 +139,111 @@ def get_recent_activity():
             AIInteraction.created_at.desc()
         ).limit(limit).all()
         
-        activities = []
+        # Get recent lesson progress
+        recent_lessons = LessonProgress.query.filter_by(
+            user_id=current_user_id
+        ).order_by(
+            LessonProgress.last_accessed.desc()
+        ).limit(limit).all()
         
-        # Format challenge attempts for React Native with proper icons
+        # Get recent game sessions
+        recent_games = GameSession.query.filter_by(
+            user_id=current_user_id
+        ).order_by(
+            GameSession.started_at.desc()
+        ).limit(limit).all()
+        
+        # Format challenge attempts
         for attempt in recent_attempts:
             challenge = Challenge.query.get(attempt.challenge_id)
             activities.append({
                 'id': f'challenge_{attempt.id}',
                 'type': 'challenge',
-                'title': f'Challenge: {challenge.title if challenge else "Unknown"}',
-                'description': f'{"Completed" if attempt.is_correct else "Attempted"} challenge',
-                'time': attempt.submitted_at.strftime('%Y-%m-%d %H:%M') if attempt.submitted_at else 'Recently',
-                'icon': 'trophy',
+                'title': f'Challenge: {challenge.title if challenge else "Coding Challenge"}',
+                'description': f'{"Completed" if attempt.is_correct else "Attempted"} programming challenge',
+                'time': attempt.submitted_at.isoformat() if attempt.submitted_at else datetime.utcnow().isoformat(),
+                'icon': 'code',
                 'iconType': 'Ionicons',
-                'completed': attempt.is_correct
+                'completed': attempt.is_correct,
+                'timestamp': attempt.submitted_at or datetime.utcnow()
             })
         
-        # Format AI interactions for React Native with proper icons
+        # Format AI interactions
         for interaction in recent_ai_interactions:
             activities.append({
                 'id': f'ai_{interaction.id}',
                 'type': 'ai_interaction',
-                'title': 'AI Assistance',
-                'description': f'Used {interaction.model_used or "AI"} for help',
-                'time': interaction.created_at.strftime('%Y-%m-%d %H:%M') if interaction.created_at else 'Recently',
-                'icon': 'help-buoy',
+                'title': 'AI Learning Assistant',
+                'description': f'Used AI for {interaction.action or "learning help"}',
+                'time': interaction.created_at.isoformat() if interaction.created_at else datetime.utcnow().isoformat(),
+                'icon': 'robot',
                 'iconType': 'Ionicons',
-                'completed': True
+                'completed': True,
+                'timestamp': interaction.created_at or datetime.utcnow()
             })
         
-        # If no activities, return sample data with proper icons
+        # Format lesson progress
+        for lesson in recent_lessons:
+            if lesson.last_accessed:
+                activities.append({
+                    'id': f'lesson_{lesson.id}',
+                    'type': 'lesson',
+                    'title': 'Lesson Progress',
+                    'description': f'{"Completed" if lesson.completed else "Progress"} on learning module',
+                    'time': lesson.last_accessed.isoformat(),
+                    'icon': 'book',
+                    'iconType': 'Ionicons',
+                    'completed': lesson.completed,
+                    'timestamp': lesson.last_accessed
+                })
+        
+        # Format game sessions
+        for game in recent_games:
+            activities.append({
+                'id': f'game_{game.id}',
+                'type': 'game',
+                'title': f'Game: {game.game_type}',
+                'description': f'{"Completed" if game.completed else "Played"} educational game',
+                'time': game.started_at.isoformat() if game.started_at else datetime.utcnow().isoformat(),
+                'icon': 'game-controller',
+                'iconType': 'Ionicons',
+                'completed': game.completed,
+                'timestamp': game.started_at or datetime.utcnow()
+            })
+        
+        # Sort by timestamp and limit
+        activities.sort(key=lambda x: x.get('timestamp', datetime.min), reverse=True)
+        activities = activities[:limit]
+        
+        # Remove timestamp before returning
+        for activity in activities:
+            activity.pop('timestamp', None)
+        
+        # If no activities, return sample data
         if not activities:
+            current_time = datetime.utcnow().isoformat()
             activities = [
                 {
                     'id': '1',
                     'type': 'challenge',
                     'title': 'Python Basics Challenge',
                     'description': 'Completed programming fundamentals',
-                    'time': '2 hours ago',
-                    'icon': 'trophy',
+                    'time': current_time,
+                    'icon': 'code',
                     'iconType': 'Ionicons',
                     'completed': True
                 },
                 {
                     'id': '2', 
                     'type': 'ai_interaction',
-                    'title': 'AI Code Review',
+                    'title': 'AI Learning Assistant',
                     'description': 'Got help with algorithm optimization',
-                    'time': '5 hours ago',
-                    'icon': 'help-buoy',
+                    'time': current_time,
+                    'icon': 'robot',
                     'iconType': 'Ionicons',
                     'completed': True
                 }
             ]
-        
-        # Sort by time and limit
-        activities.sort(key=lambda x: x.get('time', ''), reverse=True)
-        activities = activities[:limit]
         
         return jsonify({'activities': activities}), 200
         
@@ -182,10 +256,16 @@ def get_recent_activity():
 def get_upcoming_challenges():
     """Get upcoming challenges - Updated for React Native"""
     try:
-        # Get active challenges that haven't ended
-        current_time = datetime.utcnow()
+        current_user_id = get_jwt_identity()
+        
+        # Get active challenges that user hasn't completed yet
+        completed_challenge_ids = db.session.query(UserChallengeProgress.challenge_id).filter_by(
+            user_id=current_user_id,
+            completed=True
+        ).subquery()
+        
         challenges = Challenge.query.filter(
-            (Challenge.end_date == None) | (Challenge.end_date >= current_time)
+            ~Challenge.id.in_(completed_challenge_ids)
         ).filter_by(
             is_active=True
         ).limit(5).all()
@@ -193,40 +273,45 @@ def get_upcoming_challenges():
         challenge_list = []
         for challenge in challenges:
             # Count participants (users who attempted this challenge)
-            participants = ChallengeAttempt.query.filter_by(
+            participants_count = db.session.query(
+                func.count(distinct(ChallengeAttempt.user_id))
+            ).filter_by(
                 challenge_id=challenge.id
-            ).distinct(ChallengeAttempt.user_id).count()
+            ).scalar() or 0
             
             challenge_list.append({
                 'id': challenge.id,
                 'title': challenge.title,
                 'description': challenge.description or 'Test your skills with this challenge',
-                'date': challenge.end_date.strftime('%Y-%m-%d') if challenge.end_date else 'No deadline',
-                'participants': participants,
                 'difficulty': getattr(challenge, 'difficulty', 'medium'),
-                'category': getattr(challenge, 'category', 'programming')
+                'category': getattr(challenge, 'category', 'programming'),
+                'points': getattr(challenge, 'points', 100),
+                'participants': participants_count,
+                'is_ai_generated': getattr(challenge, 'is_ai_generated', False)
             })
         
         # If no challenges, return sample data
         if not challenge_list:
             challenge_list = [
                 {
-                    'id': 1,
+                    'id': 'sample_1',
                     'title': 'Python Fundamentals Challenge',
                     'description': 'Master basic Python concepts and syntax',
-                    'date': '2025-10-28',
-                    'participants': 156,
                     'difficulty': 'beginner',
-                    'category': 'python'
+                    'category': 'python',
+                    'points': 100,
+                    'participants': 156,
+                    'is_ai_generated': False
                 },
                 {
-                    'id': 2,
-                    'title': 'Algorithm Mastery',
-                    'description': 'Solve complex algorithm problems', 
-                    'date': '2025-10-30',
-                    'participants': 89,
+                    'id': 'sample_2',
+                    'title': 'Algorithm Mastery', 
+                    'description': 'Solve complex algorithm problems',
                     'difficulty': 'advanced',
-                    'category': 'algorithms'
+                    'category': 'algorithms',
+                    'points': 200,
+                    'participants': 89,
+                    'is_ai_generated': True
                 }
             ]
         
@@ -247,10 +332,18 @@ def get_achievements():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
-        achievements_list = []
-        
         # Calculate user progress for achievements
         completed_challenges = UserChallengeProgress.query.filter_by(
+            user_id=current_user_id, 
+            completed=True
+        ).count()
+        
+        completed_lessons = LessonProgress.query.filter_by(
+            user_id=current_user_id, 
+            completed=True
+        ).count()
+        
+        completed_games = GameSession.query.filter_by(
             user_id=current_user_id, 
             completed=True
         ).count()
@@ -266,16 +359,26 @@ def get_achievements():
         
         accuracy = (correct_attempts / total_attempts * 100) if total_attempts > 0 else 0
         
+        # Calculate total points for level
+        total_points = (
+            completed_challenges * 30 +
+            completed_lessons * 10 +
+            completed_games * 20
+        )
+        user_level = min((total_points // 100) + 1, 10)
+        
         # Define achievements based on user progress with proper icons
-        achievements_data = [
+        achievements_list = [
             {
                 'id': 1,
                 'name': 'First Steps',
                 'description': 'Complete your first challenge',
                 'icon': 'flag',
                 'iconType': 'Ionicons',
-                'progress': min(completed_challenges, 1) * 100,
-                'completed': completed_challenges >= 1
+                'progress': min(completed_challenges, 1),
+                'total': 1,
+                'completed': completed_challenges >= 1,
+                'percentage': min(completed_challenges, 1) * 100
             },
             {
                 'id': 2,
@@ -283,45 +386,56 @@ def get_achievements():
                 'description': 'Complete 10 challenges',
                 'icon': 'trophy',
                 'iconType': 'Ionicons',
-                'progress': min(completed_challenges, 10) * 10,
-                'completed': completed_challenges >= 10
+                'progress': min(completed_challenges, 10),
+                'total': 10,
+                'completed': completed_challenges >= 10,
+                'percentage': min(completed_challenges, 10) * 10
             },
             {
                 'id': 3,
+                'name': 'Learning Pathfinder',
+                'description': 'Complete 5 lessons',
+                'icon': 'book',
+                'iconType': 'Ionicons',
+                'progress': min(completed_lessons, 5),
+                'total': 5,
+                'completed': completed_lessons >= 5,
+                'percentage': min(completed_lessons, 5) * 20
+            },
+            {
+                'id': 4,
+                'name': 'Game Champion',
+                'description': 'Complete 3 educational games',
+                'icon': 'game-controller',
+                'iconType': 'Ionicons',
+                'progress': min(completed_games, 3),
+                'total': 3,
+                'completed': completed_games >= 3,
+                'percentage': min(completed_games, 3) * 33.3
+            },
+            {
+                'id': 5,
                 'name': 'Code Ninja',
                 'description': 'Reach level 5',
                 'icon': 'star',
                 'iconType': 'Ionicons',
-                'progress': min(getattr(user, 'level', 1), 5) * 20,
-                'completed': getattr(user, 'level', 0) >= 5
+                'progress': min(user_level, 5),
+                'total': 5,
+                'completed': user_level >= 5,
+                'percentage': min(user_level, 5) * 20
             },
             {
-                'id': 4,
+                'id': 6,
                 'name': 'Precision Coder',
                 'description': 'Achieve 80% accuracy',
                 'icon': 'target',
                 'iconType': 'Ionicons',
                 'progress': min(accuracy, 80),
-                'completed': accuracy >= 80
+                'total': 80,
+                'completed': accuracy >= 80,
+                'percentage': min(accuracy, 80)
             }
         ]
-        
-        # Add any existing achievements from user model if available
-        if hasattr(user, 'achievements') and user.achievements:
-            for achievement in user.achievements:
-                achievements_list.append({
-                    'id': len(achievements_list) + 1,
-                    'name': achievement.get('name', 'Achievement'),
-                    'description': achievement.get('description', ''),
-                    'icon': achievement.get('icon', 'trophy'),
-                    'iconType': 'Ionicons',
-                    'progress': 100,
-                    'completed': True
-                })
-        
-        # Combine with calculated achievements
-        for achievement in achievements_data:
-            achievements_list.append(achievement)
         
         # Ensure we have at least some achievements
         if not achievements_list:
@@ -333,7 +447,9 @@ def get_achievements():
                     'icon': 'hand-right',
                     'iconType': 'Ionicons',
                     'progress': 0,
-                    'completed': False
+                    'total': 1,
+                    'completed': False,
+                    'percentage': 0
                 }
             ]
         
@@ -346,7 +462,7 @@ def get_achievements():
 @dashboard_bp.route('/dashboard/complete-activity', methods=['POST'])
 @jwt_required()
 def complete_activity():
-    """Mark an activity as completed - Simple implementation"""
+    """Mark an activity as completed"""
     try:
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
@@ -356,9 +472,19 @@ def complete_activity():
             
         data = request.get_json()
         activity_id = data.get('activity_id')
+        activity_type = data.get('activity_type')
         
-        # For now, just return success since we don't have a specific activity model
-        # In a real implementation, you'd update the relevant model
+        # Log the activity completion
+        activity = UserActivity(
+            user_id=current_user_id,
+            activity_type=f'{activity_type}_complete',
+            activity_data=json.dumps({
+                'activity_id': activity_id,
+                'completed_at': datetime.utcnow().isoformat()
+            })
+        )
+        db.session.add(activity)
+        db.session.commit()
         
         return jsonify({
             'message': 'Activity completed successfully',
@@ -367,14 +493,14 @@ def complete_activity():
         }), 200
         
     except Exception as e:
+        db.session.rollback()
         current_app.logger.error(f"Error in /api/dashboard/complete-activity: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
-# Keep your existing endpoints for other functionality
 @dashboard_bp.route('/dashboard/overview', methods=['GET'])
 @jwt_required()
 def get_dashboard_overview():
-    """Get overview data for user dashboard - Your existing endpoint"""
+    """Get comprehensive dashboard overview"""
     try:
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
@@ -382,14 +508,29 @@ def get_dashboard_overview():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
-        # Your existing overview logic here
-        # ...
+        # Get stats from other endpoints
+        stats_response = get_dashboard_stats()
+        activities_response = get_recent_activity()
+        challenges_response = get_upcoming_challenges()
+        achievements_response = get_achievements()
+        
+        # Extract data from responses
+        stats_data = stats_response[0].json if hasattr(stats_response[0], 'json') else {'stats': []}
+        activities_data = activities_response[0].json if hasattr(activities_response[0], 'json') else {'activities': []}
+        challenges_data = challenges_response[0].json if hasattr(challenges_response[0], 'json') else {'challenges': []}
+        achievements_data = achievements_response[0].json if hasattr(achievements_response[0], 'json') else {'achievements': []}
+        
+        overview = {
+            'user': user.to_dict(),
+            'stats': stats_data.get('stats', []),
+            'recent_activities': activities_data.get('activities', [])[:3],
+            'upcoming_challenges': challenges_data.get('challenges', [])[:3],
+            'achievements': achievements_data.get('achievements', [])[:4]
+        }
         
         return jsonify({
             'success': True,
-            'overview': {
-                # Your existing overview data structure
-            }
+            'overview': overview
         }), 200
         
     except Exception as e:

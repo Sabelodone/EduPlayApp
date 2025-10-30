@@ -1,0 +1,3129 @@
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from flask_bcrypt import Bcrypt
+from flask_jwt_extended import JWTManager, create_access_token, create_refresh_token, jwt_required, get_jwt_identity
+from flask_cors import CORS
+from datetime import datetime, timedelta
+import os
+import json
+from dotenv import load_dotenv
+from openai import OpenAI
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Initialize extensions
+db = SQLAlchemy()
+bcrypt = Bcrypt()
+jwt = JWTManager()
+
+class AIService:
+    def __init__(self):
+        self.current_model = "gpt-3.5-turbo"
+        self.openai_api_key = os.environ.get('OPENAI_API_KEY')
+        
+        # Initialize OpenAI client if API key is available
+        if self.openai_api_key:
+            self.client = OpenAI(api_key=self.openai_api_key)
+            print("✅ OpenAI service initialized successfully")
+        else:
+            self.client = None
+            print("⚠️ OpenAI API key not found. Using fallback mode.")
+    
+    def generate_educational_content(self, content_type, parameters):
+        """
+        Unified method to generate various educational content
+        
+        Args:
+            content_type: 'lesson', 'quiz', 'game', 'challenge', 'explanation'
+            parameters: dict with specific parameters for each content type
+        """
+        content_generators = {
+            'lesson': self._generate_lesson,
+            'quiz': self._generate_quiz,
+            'game': self._generate_game_content,
+            'challenge': self._generate_challenge,
+            'explanation': self._generate_explanation
+        }
+        
+        generator = content_generators.get(content_type)
+        if not generator:
+            raise ValueError(f"Unsupported content type: {content_type}")
+        
+        return generator(parameters)
+
+    # ========== ENHANCED AI METHODS FOR PERSONALIZATION ==========
+    
+    def generate_personalized_lessons(self, user_data):
+        """Generate personalized lessons based on user profile"""
+        if not self.openai_api_key or not self.client:
+            return self._get_fallback_lessons()
+        
+        try:
+            prompt = f"""
+            Create 3-5 personalized learning modules for this student based on their profile and progress.
+            
+            Student Profile:
+            - Name: {user_data.get('first_name', 'Student')}
+            - Grade Level: {user_data.get('grade_level', '5')}
+            - Current Level: {user_data.get('user_level', 1)}
+            - Interests: {', '.join(user_data.get('interests', ['mathematics', 'science']))}
+            - Learning Style: {user_data.get('learning_style', 'interactive')}
+            - Progress: {user_data.get('lessons_completed', 0)} lessons completed
+            - Strengths: {user_data.get('strengths', ['general'])}
+            
+            Create engaging, personalized lessons that:
+            - Build on their current knowledge
+            - Match their grade level and interests
+            - Include interactive elements
+            - Have clear learning objectives
+            
+            Format as JSON:
+            {{
+                "lessons": [
+                    {{
+                        "id": 1,
+                        "title": "Engaging lesson title",
+                        "description": "Personalized description",
+                        "subject": "main subject",
+                        "grade_level": "appropriate level",
+                        "difficulty": "beginner/intermediate/advanced",
+                        "duration_minutes": 30,
+                        "learning_objectives": ["objective1", "objective2"],
+                        "personalized_reason": "Why this lesson is good for this student",
+                        "thumbnail_idea": "visual concept for lesson",
+                        "interactive_elements": ["element1", "element2"]
+                    }}
+                ]
+            }}
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are an expert educational content creator that designs personalized learning experiences for K-12 students."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=1000
+            )
+            
+            content = response.choices[0].message.content.strip()
+            return json.loads(content)
+            
+        except Exception as e:
+            print(f"❌ AI lesson generation failed: {e}")
+            return self._get_fallback_lessons()
+    
+    def generate_personalized_games(self, user_data):
+        """Generate personalized game suggestions based on user profile"""
+        if not self.openai_api_key or not self.client:
+            return self._get_fallback_games()
+        
+        try:
+            prompt = f"""
+            Create 3-4 personalized educational game suggestions for this student.
+            
+            Student Profile:
+            - Name: {user_data.get('first_name', 'Student')}
+            - Grade Level: {user_data.get('grade_level', '5')}
+            - Current Level: {user_data.get('user_level', 1)}
+            - Interests: {', '.join(user_data.get('interests', ['mathematics', 'science']))}
+            - Learning Style: {user_data.get('learning_style', 'interactive')}
+            - Games Completed: {user_data.get('games_completed', 0)}
+            - Favorite Subjects: {user_data.get('interests', ['mathematics', 'science'])}
+            
+            Create game concepts that:
+            - Are educational and engaging
+            - Match their skill level
+            - Incorporate their interests
+            - Have clear learning objectives
+            
+            Format as JSON:
+            {{
+                "games": [
+                    {{
+                        "id": 1,
+                        "title": "Creative game title",
+                        "description": "Engaging game description",
+                        "category": "subject area",
+                        "difficulty": "easy/medium/hard",
+                        "learning_objectives": ["skill1", "skill2"],
+                        "game_mechanics": "how the game works",
+                        "personalized_reason": "Why this game suits the student",
+                        "estimated_duration": "10-15 minutes",
+                        "skills_practiced": ["skill1", "skill2"]
+                    }}
+                ]
+            }}
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are a creative educational game designer that creates engaging learning games for students."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.8,
+                max_tokens=800
+            )
+            
+            content = response.choices[0].message.content.strip()
+            return json.loads(content)
+            
+        except Exception as e:
+            print(f"❌ AI game generation failed: {e}")
+            return self._get_fallback_games()
+    
+    def generate_personalized_quizzes(self, user_data):
+        """Generate personalized quiz suggestions based on user profile"""
+        if not self.openai_api_key or not self.client:
+            return self._get_fallback_quizzes()
+        
+        try:
+            prompt = f"""
+            Create 2-3 personalized quiz suggestions for this student to assess their learning.
+            
+            Student Profile:
+            - Name: {user_data.get('first_name', 'Student')}
+            - Grade Level: {user_data.get('grade_level', '5')}
+            - Current Level: {user_data.get('user_level', 1)}
+            - Recent Lessons: {user_data.get('recent_lessons', ['general topics'])}
+            - Strengths: {user_data.get('strengths', ['general knowledge'])}
+            - Areas for Improvement: {user_data.get('improvement_areas', ['new concepts'])}
+            
+            Create quizzes that:
+            - Reinforce recent learning
+            - Challenge appropriately
+            - Provide valuable feedback
+            - Match their skill level
+            
+            Format as JSON:
+            {{
+                "quizzes": [
+                    {{
+                        "id": 1,
+                        "title": "Quiz title",
+                        "description": "What this quiz covers",
+                        "subject": "main subject",
+                        "difficulty": "appropriate level",
+                        "time_limit_minutes": 15,
+                        "total_questions": 8,
+                        "topics_covered": ["topic1", "topic2"],
+                        "personalized_reason": "Why this quiz is beneficial",
+                        "skills_assessed": ["skill1", "skill2"]
+                    }}
+                ]
+            }}
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are an educational assessment expert that creates meaningful learning evaluations."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.6,
+                max_tokens=700
+            )
+            
+            content = response.choices[0].message.content.strip()
+            return json.loads(content)
+            
+        except Exception as e:
+            print(f"❌ AI quiz generation failed: {e}")
+            return self._get_fallback_quizzes()
+
+    def generate_personalized_achievements(self, user_data):
+        """Generate personalized achievement suggestions using AI"""
+        if not self.openai_api_key or not self.client:
+            return self._get_fallback_achievements()
+        
+        try:
+            prompt = f"""
+            As an educational AI assistant, analyze this student's learning progress and generate 3-5 personalized achievement suggestions.
+            
+            Student Profile:
+            - Name: {user_data.get('first_name', 'Student')}
+            - Grade Level: {user_data.get('grade_level', '5')}
+            - Lessons Completed: {user_data.get('lessons_completed', 0)}
+            - Games Played: {user_data.get('games_completed', 0)}
+            - Current Streak: {user_data.get('current_streak', 0)} days
+            - Total Points: {user_data.get('total_points', 0)}
+            - Interests: {', '.join(user_data.get('interests', ['mathematics', 'science']))}
+            - Learning Style: {user_data.get('learning_style', 'interactive')}
+            
+            Please provide:
+            1. 3-5 suggested achievements with names, descriptions, and progress tracking
+            2. Motivational insights based on their current progress
+            3. A motivational quote about learning
+            
+            Format as JSON:
+            {{
+                "suggested_achievements": [
+                    {{
+                        "id": 1,
+                        "name": "Achievement Name",
+                        "description": "Clear description of how to earn this",
+                        "icon": "relevant emoji",
+                        "progress": 0,
+                        "motivational_message": "Personalized encouragement"
+                    }}
+                ],
+                "insights": ["insight1", "insight2"],
+                "motivational_quote": "Inspirational quote about learning"
+            }}
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are an encouraging educational coach that creates personalized learning goals and achievements for K-12 students."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=800
+            )
+            
+            content = response.choices[0].message.content.strip()
+            return json.loads(content)
+            
+        except Exception as e:
+            print(f"❌ AI achievement generation failed: {e}")
+            return self._get_fallback_achievements()
+
+    def analyze_activity_patterns(self, activities, user_data):
+        """Analyze user activity patterns and provide insights using AI"""
+        if not self.openai_api_key or not self.client:
+            return self._get_fallback_activity_analysis()
+        
+        try:
+            activity_summary = "\n".join([
+                f"- {act['type']}: {act['title']} ({act.get('score', 'N/A')} score, {act['time']})"
+                for act in activities[:10]
+            ])
+            
+            prompt = f"""
+            Analyze this student's recent learning activities and provide personalized insights.
+            
+            Student: {user_data.get('first_name', 'Student')} (Grade {user_data.get('grade_level', '5')}, Level {user_data.get('user_level', 1)})
+            Total Points: {user_data.get('total_points', 0)}
+            Interests: {', '.join(user_data.get('interests', ['mathematics', 'science']))}
+            
+            Recent Activities:
+            {activity_summary}
+            
+            Please provide:
+            1. 2-3 key insights about their learning patterns
+            2. 2-3 specific recommendations for what to try next
+            3. 1-2 concrete next steps to continue progress
+            
+            Format as JSON:
+            {{
+                "insights": ["insight1", "insight2"],
+                "recommendations": ["recommendation1", "recommendation2"],
+                "next_steps": ["step1", "step2"]
+            }}
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are an observant learning analyst that identifies patterns in student activity and provides helpful, actionable suggestions."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.6,
+                max_tokens=600
+            )
+            
+            content = response.choices[0].message.content.strip()
+            return json.loads(content)
+            
+        except Exception as e:
+            print(f"❌ AI activity analysis failed: {e}")
+            return self._get_fallback_activity_analysis()
+
+    def generate_personalized_challenges(self, user_data):
+        """Generate personalized learning challenges using AI"""
+        if not self.openai_api_key or not self.client:
+            return self._get_fallback_challenges()
+        
+        try:
+            prompt = f"""
+            Create 2-3 personalized learning challenges for this student based on their profile and progress.
+            
+            Student Profile:
+            - Name: {user_data.get('first_name', 'Student')}
+            - Grade Level: {user_data.get('grade_level', '5')}
+            - Current Level: {user_data.get('user_level', 1)}
+            - Lessons Completed: {user_data.get('completed_lessons', 0)}
+            - Games Completed: {user_data.get('completed_games', 0)}
+            - Interests: {', '.join(user_data.get('interests', ['mathematics', 'science']))}
+            - Learning Style: {user_data.get('learning_style', 'interactive')}
+            - Current Streak: {user_data.get('current_streak', 0)} days
+            
+            Please create challenges that are:
+            - Age-appropriate and engaging
+            - Build on their current skills
+            - Introduce new concepts gradually
+            - Can be completed in 15-30 minutes
+            - Include points rewards
+            
+            Format as JSON:
+            {{
+                "challenges": [
+                    {{
+                        "id": 1,
+                        "title": "Challenge Title",
+                        "description": "Clear, engaging description",
+                        "difficulty": "easy/medium/hard",
+                        "category": "subject area",
+                        "duration": "estimated time",
+                        "reason": "why this challenge is good for them",
+                        "skills": ["skill1", "skill2"],
+                        "points_reward": 100
+                    }}
+                ],
+                "recommendations": ["recommendation1", "recommendation2"],
+                "learning_path": ["step1", "step2", "step3"]
+            }}
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are a creative educational designer that creates engaging, personalized learning challenges for students."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=800
+            )
+            
+            content = response.choices[0].message.content.strip()
+            return json.loads(content)
+            
+        except Exception as e:
+            print(f"❌ AI challenge generation failed: {e}")
+            return self._get_fallback_challenges()
+
+    def analyze_progress(self, user_data):
+        """Analyze student progress and provide insights using AI"""
+        if not self.openai_api_key or not self.client:
+            return self._get_fallback_progress_analysis()
+        
+        try:
+            prompt = f"""
+            Analyze this student's learning progress and provide motivational insights and recommendations.
+            
+            Student: {user_data.get('first_name', 'Student')}
+            Grade: {user_data.get('grade_level', '5')}
+            Level: {user_data.get('level', 1)}
+            Member Since: {user_data.get('join_date', 'recently')}
+            Interests: {', '.join(user_data.get('interests', ['mathematics', 'science']))}
+            
+            Current Progress:
+            - Level: {user_data.get('level', 1)}
+            - Lessons Completed: {user_data.get('lessons_completed', 0)}
+            - Games Played: {user_data.get('games_completed', 0)}
+            - Quizzes Completed: {user_data.get('quizzes_completed', 0)}
+            - Current Streak: {user_data.get('current_streak', 0)} days
+            - Total Points: {user_data.get('total_points', 0)}
+            
+            Please provide:
+            1. An encouraging overview of their progress
+            2. Specific insights for each metric (lessons, streak, points, games)
+            3. A goal for reaching the next level
+            4. A weekly focus area
+            5. 2-3 learning tips
+            
+            Format as JSON:
+            {{
+                "overview": "Encouraging summary",
+                "lessons_insight": "insight about lessons",
+                "streak_insight": "insight about streak", 
+                "points_insight": "insight about points",
+                "games_insight": "insight about games",
+                "lessons_change": "+X%",
+                "streak_change": "+Y",
+                "points_change": "+Z",
+                "games_change": "+W%",
+                "next_level_goal": "Specific goal for next level",
+                "weekly_focus": "What to focus on this week",
+                "learning_tips": ["tip1", "tip2", "tip3"]
+            }}
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are an encouraging learning coach that helps students understand their progress and stay motivated."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.6,
+                max_tokens=700
+            )
+            
+            content = response.choices[0].message.content.strip()
+            return json.loads(content)
+            
+        except Exception as e:
+            print(f"❌ AI progress analysis failed: {e}")
+            return self._get_fallback_progress_analysis()
+
+    def generate_starter_achievements(self, user_data):
+        """Generate starter achievements for new users"""
+        if not self.openai_api_key or not self.client:
+            return self._get_fallback_achievements()
+        
+        try:
+            prompt = f"""
+            Create 3-4 starter achievements for a new student beginning their learning journey.
+            
+            Student: {user_data.get('first_name', 'Student')}
+            Grade Level: {user_data.get('grade_level', '5')}
+            Interests: {', '.join(user_data.get('interests', ['mathematics', 'science']))}
+            
+            Create engaging starter achievements that will motivate them to begin learning.
+            
+            Format as JSON:
+            {{
+                "achievements": [
+                    {{
+                        "id": 1,
+                        "name": "Achievement Name",
+                        "description": "How to earn this achievement",
+                        "icon": "relevant emoji",
+                        "progress": 0
+                    }}
+                ]
+            }}
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You create motivating starter goals for new students to begin their educational journey."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=600
+            )
+            
+            content = response.choices[0].message.content.strip()
+            return json.loads(content)
+            
+        except Exception as e:
+            print(f"❌ AI starter achievements failed: {e}")
+            return {"achievements": []}
+
+    def generate_starter_activities(self, user_data):
+        """Generate starter activities for new users"""
+        if not self.openai_api_key or not self.client:
+            return self._get_fallback_activity_analysis()
+        
+        try:
+            prompt = f"""
+            Create starter activity suggestions for a new student.
+            
+            Student: {user_data.get('first_name', 'Student')}
+            Grade Level: {user_data.get('grade_level', '5')}
+            Level: {user_data.get('user_level', 1)}
+            Interests: {', '.join(user_data.get('interests', ['mathematics', 'science']))}
+            
+            Provide suggestions for getting started with their learning journey.
+            
+            Format as JSON:
+            {{
+                "activities": [
+                    {{
+                        "id": 1,
+                        "type": "lesson/game/quiz",
+                        "title": "Activity Title",
+                        "description": "Activity description",
+                        "icon": "relevant icon",
+                        "action_url": "suggested action"
+                    }}
+                ],
+                "insights": ["insight1", "insight2"],
+                "recommendations": ["recommendation1", "recommendation2"],
+                "next_steps": ["step1", "step2"]
+            }}
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You help new students get started with their learning journey by suggesting engaging first activities."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=600
+            )
+            
+            content = response.choices[0].message.content.strip()
+            return json.loads(content)
+            
+        except Exception as e:
+            print(f"❌ AI starter activities failed: {e}")
+            return self._get_fallback_activity_analysis()
+
+    def generate_fallback_challenges(self, user_data):
+        """Generate fallback challenges when no challenges exist"""
+        return self._get_fallback_challenges()
+
+    # ========== ORIGINAL AI METHODS ==========
+    
+    def _generate_lesson(self, params):
+        """Generate lesson content"""
+        subject = params.get('subject', 'mathematics')
+        grade_level = params.get('grade_level', 5)
+        topic = params.get('topic', 'general')
+        
+        prompt = f"""
+        Create a comprehensive lesson plan for {topic} in {subject} for grade {grade_level} students.
+        
+        Include:
+        - Learning objectives
+        - Key concepts with explanations
+        - Examples with step-by-step solutions
+        - Practice problems with answers
+        - Real-world applications
+        
+        Format as JSON:
+        {{
+            "title": "Engaging lesson title",
+            "subject": "{subject}",
+            "grade_level": {grade_level},
+            "topic": "{topic}",
+            "duration_minutes": 45,
+            "learning_objectives": ["objective1", "objective2"],
+            "key_concepts": [
+                {{
+                    "concept": "concept name",
+                    "explanation": "clear explanation",
+                    "example": "practical example"
+                }}
+            ],
+            "practice_problems": [
+                {{
+                    "problem": "problem statement",
+                    "solution": "step-by-step solution",
+                    "difficulty": "easy/medium/hard"
+                }}
+            ],
+            "real_world_connections": ["connection1", "connection2"]
+        }}
+        """
+        
+        return self._call_openai(prompt, 'lesson', params)
+    
+    def _generate_quiz(self, params):
+        """Generate quiz questions"""
+        subject = params.get('subject', 'mathematics')
+        grade_level = params.get('grade_level', 5)
+        topic = params.get('topic', 'general')
+        num_questions = params.get('num_questions', 5)
+        difficulty = params.get('difficulty', 'medium')
+        
+        prompt = f"""
+        Create {num_questions} {difficulty} difficulty multiple-choice quiz questions 
+        about {topic} in {subject} for grade {grade_level} students.
+        
+        Each question should have:
+        - Clear question stem
+        - 4 plausible options (A, B, C, D)
+        - Correct answer
+        - Explanation
+        - Points based on difficulty
+        
+        Format as JSON:
+        {{
+            "quiz_title": "Quiz about {topic}",
+            "subject": "{subject}",
+            "grade_level": {grade_level},
+            "questions": [
+                {{
+                    "id": 1,
+                    "question": "question text",
+                    "options": {{
+                        "A": "option A",
+                        "B": "option B", 
+                        "C": "option C",
+                        "D": "option D"
+                    }},
+                    "correct_answer": "A",
+                    "explanation": "detailed explanation",
+                    "points": 10,
+                    "difficulty": "{difficulty}"
+                }}
+            ],
+            "total_points": 50,
+            "time_limit_minutes": 15
+        }}
+        """
+        
+        return self._call_openai(prompt, 'quiz', params)
+    
+    def _generate_game_content(self, params):
+        """Generate educational game content"""
+        game_type = params.get('game_type', 'puzzle')
+        subject = params.get('subject', 'mathematics')
+        grade_level = params.get('grade_level', 5)
+        
+        prompt = f"""
+        Create educational game content for a {game_type} game about {subject} 
+        for grade {grade_level} students.
+        
+        Include:
+        - Game objectives
+        - Rules and mechanics
+        - Educational content integration
+        - Difficulty progression
+        - Rewards system
+        
+        Format as JSON:
+        {{
+            "game_title": "Educational {game_type} game",
+            "game_type": "{game_type}",
+            "subject": "{subject}",
+            "grade_level": {grade_level},
+            "learning_objectives": ["objective1", "objective2"],
+            "game_mechanics": "description of how the game works",
+            "levels": [
+                {{
+                    "level": 1,
+                    "description": "level description",
+                    "challenges": ["challenge1", "challenge2"],
+                    "points_reward": 100
+                }}
+            ],
+            "educational_content": "how learning is integrated into gameplay"
+        }}
+        """
+        
+        return self._call_openai(prompt, 'game', params)
+    
+    def _generate_challenge(self, params):
+        """Generate educational challenge"""
+        user_level = params.get('user_level', 5)
+        preferences = params.get('preferences', {})
+        difficulty = self._determine_difficulty(user_level)
+        category = preferences.get('category', 'mathematics')
+        subject = preferences.get('subject', 'general')
+        
+        prompt = f"""
+        Create an educational {difficulty} level challenge for a grade {user_level} student.
+        Subject: {subject}
+        Category: {category}
+        
+        Requirements:
+        - Create an engaging title
+        - Write a clear description of the challenge
+        - Include learning objectives
+        - Suggest time limit (in minutes)
+        - Provide 3-5 key concepts covered
+        
+        Respond in JSON format:
+        {{
+            "title": "Challenge title",
+            "description": "Detailed description",
+            "difficulty": "{difficulty}",
+            "category": "{category}",
+            "subject": "{subject}",
+            "points": {user_level * 100},
+            "time_limit_minutes": 30,
+            "learning_objectives": ["objective1", "objective2"],
+            "key_concepts": ["concept1", "concept2", "concept3"],
+            "requirements": {{
+                "min_time": 10,
+                "max_time": 60
+            }},
+            "ai_generated": true
+        }}
+        """
+        
+        result = self._call_openai(prompt, 'challenge', params)
+        if result:
+            result['user_level'] = user_level
+        return result
+    
+    def _generate_explanation(self, params):
+        """Generate explanation for a concept"""
+        concept = params.get('concept', '')
+        grade_level = params.get('grade_level', 5)
+        
+        prompt = f"""
+        Explain the concept of '{concept}' to a grade {grade_level} student.
+        
+        Provide:
+        - Simple definition
+        - Step-by-step explanation
+        - Examples
+        - Common misconceptions
+        - Practice application
+        
+        Format as JSON:
+        {{
+            "concept": "{concept}",
+            "grade_level": {grade_level},
+            "simple_definition": "easy-to-understand definition",
+            "detailed_explanation": "step-by-step explanation",
+            "examples": [
+                {{
+                    "example": "concrete example",
+                    "explanation": "why this example works"
+                }}
+            ],
+            "common_misconceptions": ["misconception1", "misconception2"],
+            "practice_application": "how to apply this concept"
+        }}
+        """
+        
+        return self._call_openai(prompt, 'explanation', params)
+    
+    def _call_openai(self, prompt, content_type, params):
+        """Make API call to OpenAI with error handling"""
+        if not self.openai_api_key or not self.client:
+            return self._generate_fallback_content(content_type, params)
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "You are an expert educational content creator for K-12 students."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=1000
+            )
+            
+            content = response.choices[0].message.content.strip()
+            result = json.loads(content)
+            
+            # Add metadata
+            result['ai_generated'] = True
+            result['generated_at'] = datetime.utcnow().isoformat()
+            result['model_used'] = self.current_model
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ OpenAI API error for {content_type}: {e}")
+            return self._generate_fallback_content(content_type, params)
+    
+    def _generate_fallback_content(self, content_type, params):
+        """Generate fallback content when AI is unavailable"""
+        if content_type == 'lesson':
+            topic = params.get('topic', 'general')
+            grade_level = params.get('grade_level', 5)
+            return {
+                'title': f'Introduction to {topic}',
+                'subject': params.get('subject', 'mathematics'),
+                'grade_level': grade_level,
+                'topic': topic,
+                'duration_minutes': 40,
+                'learning_objectives': [f'Understand basic {topic} concepts', f'Apply {topic} principles'],
+                'key_concepts': [
+                    {
+                        'concept': 'Fundamental principles',
+                        'explanation': f'Basic principles of {topic}',
+                        'example': f'Example of {topic} in action'
+                    }
+                ],
+                'practice_problems': [
+                    {
+                        'problem': f'Practice problem 1 on {topic}',
+                        'solution': 'Step-by-step solution',
+                        'difficulty': 'easy'
+                    }
+                ],
+                'real_world_connections': [f'Real-world application of {topic}'],
+                'ai_generated': False
+            }
+        elif content_type == 'quiz':
+            return {
+                'quiz_title': f"Quiz about {params.get('topic', 'general')}",
+                'subject': params.get('subject', 'mathematics'),
+                'grade_level': params.get('grade_level', 5),
+                'questions': [
+                    {
+                        'id': 1,
+                        'question': f"What is the main concept of {params.get('topic', 'this subject')}?",
+                        'options': {
+                            'A': 'Option A',
+                            'B': 'Option B',
+                            'C': 'Option C',
+                            'D': 'Option D'
+                        },
+                        'correct_answer': 'A',
+                        'explanation': 'This is the correct answer because...',
+                        'points': 10,
+                        'difficulty': 'medium'
+                    }
+                ],
+                'total_points': 10,
+                'time_limit_minutes': 10,
+                'ai_generated': False
+            }
+        else:
+            return {
+                'title': f'Fallback {content_type.title()}',
+                'description': f'This is fallback content for {content_type}',
+                'ai_generated': False,
+                'generated_at': datetime.utcnow().isoformat()
+            }
+    
+    def analyze_solution(self, challenge_description, solution_code, requirements):
+        """Analyze student solution using AI"""
+        if not self.openai_api_key or not self.client:
+            return self._analyze_fallback(challenge_description, solution_code, requirements)
+        
+        try:
+            prompt = f"""
+            Analyze this student solution for an educational challenge.
+            
+            Challenge: {challenge_description}
+            Student Solution: {solution_code}
+            
+            Provide feedback in JSON format:
+            {{
+                "correct": boolean,
+                "score": 0-100,
+                "feedback": ["positive feedback points"],
+                "improvements": ["suggested improvements"],
+                "concepts_mastered": ["list of concepts demonstrated"],
+                "areas_for_improvement": ["areas needing work"]
+            }}
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {"role": "system", "content": "You are an expert educational assessor. Provide constructive feedback."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=600
+            )
+            
+            content = response.choices[0].message.content.strip()
+            analysis = json.loads(content)
+            return analysis
+            
+        except Exception as e:
+            print(f"❌ AI analysis failed: {e}")
+            return self._analyze_fallback(challenge_description, solution_code, requirements)
+    
+    def _analyze_fallback(self, challenge_description, solution_code, requirements):
+        """Fallback solution analysis"""
+        solution_length = len(solution_code) if solution_code else 0
+        
+        if solution_length > 50:
+            return {
+                'correct': True,
+                'score': 85,
+                'feedback': ["Good effort! Your solution shows understanding."],
+                'improvements': ["Add more comments to explain your reasoning"],
+                'concepts_mastered': ["Basic problem solving"],
+                'areas_for_improvement': ["Code documentation"]
+            }
+        else:
+            return {
+                'correct': False,
+                'score': 40,
+                'feedback': ["Try to expand your solution with more details."],
+                'improvements': ["Provide a more comprehensive answer", "Explain your approach"],
+                'concepts_mastered': [],
+                'areas_for_improvement': ["Solution completeness", "Explanation clarity"]
+            }
+    
+    def generate_hint(self, challenge_description, difficulty, current_approach):
+        """Generate helpful hints using AI"""
+        if not self.openai_api_key or not self.client:
+            return self._generate_fallback_hint(difficulty)
+        
+        try:
+            prompt = f"""
+            Generate a helpful hint for a student working on this challenge.
+            
+            Challenge: {challenge_description}
+            Difficulty: {difficulty}
+            Student's Current Approach: {current_approach or 'Not specified'}
+            
+            Provide a hint that:
+            - Guides without giving away the answer
+            - Is appropriate for {difficulty} level
+            - Helps overcome the specific challenge
+            
+            Respond with a JSON object:
+            {{
+                "hint": "the hint text",
+                "approach_suggestion": "suggested approach",
+                "resources_to_review": ["relevant topics to review"]
+            }}
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.current_model,
+                messages=[
+                    {"role": "system", "content": "You are a helpful tutor. Provide guidance that encourages learning."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.5,
+                max_tokens=300
+            )
+            
+            content = response.choices[0].message.content.strip()
+            hint_data = json.loads(content)
+            return hint_data
+            
+        except Exception as e:
+            print(f"❌ AI hint generation failed: {e}")
+            return self._generate_fallback_hint(difficulty)
+    
+    def _generate_fallback_hint(self, difficulty):
+        """Fallback hints"""
+        hints = {
+            'easy': {
+                "hint": "Try breaking the problem down into smaller steps.",
+                "approach_suggestion": "Start with the simplest case first.",
+                "resources_to_review": ["Basic concepts", "Fundamental principles"]
+            },
+            'medium': {
+                "hint": "Consider using a systematic approach.",
+                "approach_suggestion": "Look for patterns in the problem.",
+                "resources_to_review": ["Problem-solving strategies", "Related concepts"]
+            },
+            'hard': {
+                "hint": "This might require thinking outside the box.",
+                "approach_suggestion": "Break the problem into sub-problems and solve each one.",
+                "resources_to_review": ["Advanced topics", "Creative thinking techniques"]
+            }
+        }
+        return hints.get(difficulty, hints['easy'])
+    
+    def _determine_difficulty(self, user_level):
+        if user_level <= 3: 
+            return 'easy'
+        elif user_level <= 7: 
+            return 'medium'
+        else: 
+            return 'hard'
+
+    # ========== FALLBACK METHODS ==========
+    
+    def _get_fallback_lessons(self):
+        return {
+            "lessons": [
+                {
+                    "id": 1,
+                    "title": "Personalized Math Adventure",
+                    "description": "Explore mathematical concepts through interactive activities",
+                    "subject": "mathematics",
+                    "grade_level": "5",
+                    "difficulty": "beginner",
+                    "duration_minutes": 30,
+                    "learning_objectives": ["Understand basic operations", "Develop problem-solving skills"],
+                    "personalized_reason": "Builds foundational math skills",
+                    "thumbnail_idea": "Math puzzles and games",
+                    "interactive_elements": ["puzzles", "games", "quizzes"]
+                }
+            ]
+        }
+    
+    def _get_fallback_games(self):
+        return {
+            "games": [
+                {
+                    "id": 1,
+                    "title": "Learning Quest",
+                    "description": "Embark on an educational adventure",
+                    "category": "general",
+                    "difficulty": "easy",
+                    "learning_objectives": ["Critical thinking", "Knowledge application"],
+                    "game_mechanics": "Solve puzzles to advance",
+                    "personalized_reason": "Engages multiple learning styles",
+                    "estimated_duration": "15-20 minutes",
+                    "skills_practiced": ["problem-solving", "creativity"]
+                }
+            ]
+        }
+    
+    def _get_fallback_quizzes(self):
+        return {
+            "quizzes": [
+                {
+                    "id": 1,
+                    "title": "Knowledge Check",
+                    "description": "Assess your understanding of recent topics",
+                    "subject": "general",
+                    "difficulty": "medium",
+                    "time_limit_minutes": 10,
+                    "total_questions": 5,
+                    "topics_covered": ["recent learning"],
+                    "personalized_reason": "Reinforces key concepts",
+                    "skills_assessed": ["recall", "application"]
+                }
+            ]
+        }
+    
+    def _get_fallback_achievements(self):
+        return {
+            "suggested_achievements": [
+                {
+                    "id": 1,
+                    "name": "Lesson Explorer",
+                    "description": "Complete your first 5 lessons",
+                    "icon": "📚",
+                    "progress": 0,
+                    "motivational_message": "Start your learning journey!"
+                }
+            ],
+            "insights": ["Ready to begin your educational adventure!"],
+            "motivational_quote": "The beautiful thing about learning is that no one can take it away from you."
+        }
+    
+    def _get_fallback_activity_analysis(self):
+        return {
+            "insights": ["Start with interactive activities to build confidence"],
+            "recommendations": ["Try different learning formats to discover preferences"],
+            "next_steps": ["Complete a lesson to begin tracking progress"]
+        }
+    
+    def _get_fallback_challenges(self):
+        return {
+            "challenges": [
+                {
+                    "id": 1,
+                    "title": "Learning Starter Challenge",
+                    "description": "Begin your educational journey with engaging activities",
+                    "difficulty": "easy",
+                    "category": "general",
+                    "duration": "20-30 minutes",
+                    "reason": "Perfect for starting your learning adventure",
+                    "skills": ["foundational knowledge", "basic skills"],
+                    "points_reward": 100
+                }
+            ],
+            "recommendations": ["Start with general topics to build confidence"],
+            "learning_path": ["Foundation", "Exploration", "Mastery"]
+        }
+    
+    def _get_fallback_progress_analysis(self):
+        return {
+            "overview": "Ready to start your personalized learning journey!",
+            "lessons_insight": "Begin with foundational lessons",
+            "streak_insight": "Build consistent learning habits",
+            "points_insight": "Earn points through active participation", 
+            "games_insight": "Learn through engaging gameplay",
+            "lessons_change": "+0%",
+            "streak_change": "+0",
+            "points_change": "+0",
+            "games_change": "+0%",
+            "next_level_goal": "Complete initial activities to progress",
+            "weekly_focus": "Explore different learning formats",
+            "learning_tips": ["Set regular study times", "Try different activity types", "Track your progress"]
+        }
+
+# Initialize AI Service
+ai_service = AIService()
+
+def create_app():
+    app = Flask(__name__)
+    
+    # Configuration - Updated to use environment variables
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL') or 'sqlite:///eduplay.db'
+    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
+    app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY') or 'jwt-secret-key-change-in-production'
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['JWT_ACCESS_TOKEN_EXPIRES'] = 86400  # 24 hours
+    
+    # Initialize extensions with app
+    db.init_app(app)
+    bcrypt.init_app(app)
+    jwt.init_app(app)
+    CORS(app)  # Enable CORS for all routes
+    
+    # Define models (keep your existing models exactly as they are)
+    class User(db.Model):
+        __tablename__ = 'user'
+        __table_args__ = {'extend_existing': True}
+    
+        id = db.Column(db.Integer, primary_key=True)
+        email = db.Column(db.String(120), unique=True, nullable=False)
+        password = db.Column(db.String(255), nullable=False)
+        first_name = db.Column(db.String(50), nullable=False)
+        last_name = db.Column(db.String(50), nullable=False)
+        created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+        # Profile relationship
+        profile = db.relationship('UserProfile', backref='user', uselist=False, cascade='all, delete-orphan')
+        progress = db.relationship('UserProgress', backref='user', uselist=False, cascade='all, delete-orphan')
+        game_sessions = db.relationship('GameSession', backref='user', lazy=True)
+        quiz_attempts = db.relationship('QuizAttempt', backref='user', lazy=True)
+        user_challenges = db.relationship('UserChallenge', backref='user', lazy=True)
+        user_achievements = db.relationship('UserAchievement', backref='user', lazy=True)
+    
+    class UserProfile(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+        grade_level = db.Column(db.String(50))
+        school = db.Column(db.String(200))
+        preferred_language = db.Column(db.String(50), default='English')
+        subjects = db.Column(db.String(500))
+        is_minor = db.Column(db.Boolean, default=True)
+        guardian_name = db.Column(db.String(100))
+        guardian_email = db.Column(db.String(120))
+        guardian_phone = db.Column(db.String(20))
+        avatar_url = db.Column(db.String(500))
+        bio = db.Column(db.Text)
+    
+    class UserProgress(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+        total_points = db.Column(db.Integer, default=0)
+        current_streak = db.Column(db.Integer, default=0)
+        longest_streak = db.Column(db.Integer, default=0)
+        lessons_completed = db.Column(db.Integer, default=0)
+        games_completed = db.Column(db.Integer, default=0)
+        quizzes_completed = db.Column(db.Integer, default=0)
+        level = db.Column(db.Integer, default=1)
+        experience = db.Column(db.Integer, default=0)
+        last_activity_date = db.Column(db.DateTime)
+    
+    class Lesson(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        title = db.Column(db.String(200), nullable=False)
+        description = db.Column(db.Text)
+        subject = db.Column(db.String(100), nullable=False)
+        grade_level = db.Column(db.String(50))
+        difficulty = db.Column(db.String(50), default='beginner')
+        duration = db.Column(db.Integer)  # in minutes
+        content_url = db.Column(db.String(500))
+        thumbnail_url = db.Column(db.String(500))
+        is_active = db.Column(db.Boolean, default=True)
+        created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    class Game(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        title = db.Column(db.String(200), nullable=False)
+        description = db.Column(db.Text)
+        category = db.Column(db.String(100), nullable=False)
+        difficulty = db.Column(db.String(50), default='easy')
+        max_players = db.Column(db.Integer, default=1)
+        game_url = db.Column(db.String(500))
+        thumbnail_url = db.Column(db.String(500))
+        is_active = db.Column(db.Boolean, default=True)
+        created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    class GameSession(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+        game_id = db.Column(db.Integer, db.ForeignKey('game.id'), nullable=False)
+        score = db.Column(db.Integer, default=0)
+        duration = db.Column(db.Integer)  # in seconds
+        completed = db.Column(db.Boolean, default=False)
+        played_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+        game = db.relationship('Game', backref='sessions')
+    
+    class Quiz(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        title = db.Column(db.String(200), nullable=False)
+        description = db.Column(db.Text)
+        subject = db.Column(db.String(100), nullable=False)
+        difficulty = db.Column(db.String(50), default='easy')
+        time_limit = db.Column(db.Integer)  # in minutes
+        total_questions = db.Column(db.Integer, default=10)
+        is_active = db.Column(db.Boolean, default=True)
+        created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    class QuizAttempt(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+        quiz_id = db.Column(db.Integer, db.ForeignKey('quiz.id'), nullable=False)
+        score = db.Column(db.Integer, default=0)
+        total_questions = db.Column(db.Integer, default=0)
+        correct_answers = db.Column(db.Integer, default=0)
+        completed = db.Column(db.Boolean, default=False)
+        attempted_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+        quiz = db.relationship('Quiz', backref='attempts')
+    
+    class Challenge(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        title = db.Column(db.String(200), nullable=False)
+        description = db.Column(db.Text)
+        challenge_type = db.Column(db.String(100), nullable=False)  # 'lesson', 'game', 'quiz'
+        target_id = db.Column(db.Integer)  # ID of lesson, game, or quiz
+        points_reward = db.Column(db.Integer, default=100)
+        start_date = db.Column(db.DateTime)
+        end_date = db.Column(db.DateTime)
+        is_active = db.Column(db.Boolean, default=True)
+        created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    class UserChallenge(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+        challenge_id = db.Column(db.Integer, db.ForeignKey('challenge.id'), nullable=False)
+        completed = db.Column(db.Boolean, default=False)
+        completed_at = db.Column(db.DateTime)
+        joined_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+        challenge = db.relationship('Challenge', backref='user_challenges')
+    
+    class Achievement(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        name = db.Column(db.String(200), nullable=False)
+        description = db.Column(db.Text)
+        icon = db.Column(db.String(50))
+        criteria_type = db.Column(db.String(100))  # 'lessons', 'games', 'quizzes', 'streak'
+        criteria_value = db.Column(db.Integer)
+        points_reward = db.Column(db.Integer, default=50)
+    
+    class UserAchievement(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+        achievement_id = db.Column(db.Integer, db.ForeignKey('achievement.id'), nullable=False)
+        earned_at = db.Column(db.DateTime, default=datetime.utcnow)
+        progress = db.Column(db.Integer, default=0)
+    
+        achievement = db.relationship('Achievement', backref='user_achievements')
+
+    # ========== PROFILE ROUTES ==========
+    @app.route('/api/auth/profile', methods=['GET'])
+    @jwt_required()
+    def get_profile():
+        """Get user profile data"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            profile = user.profile
+            progress = user.progress
+            
+            profile_data = {
+                "profile": {
+                    "id": user.id,
+                    "username": user.email.split('@')[0],
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "grade_level": profile.grade_level if profile else '',
+                    "school": profile.school if profile else '',
+                    "preferred_language": profile.preferred_language if profile else 'English',
+                    "subjects": profile.subjects.split(',') if profile and profile.subjects else ['mathematics', 'science'],
+                    "avatar_url": profile.avatar_url if profile else '',
+                    "bio": profile.bio if profile else 'Tell us about yourself...',
+                    "social_links": {
+                        "instagram": "",
+                        "twitter": ""
+                    }
+                }
+            }
+            
+            return jsonify(profile_data), 200
+        except Exception as e:
+            print(f"❌ Error in /api/auth/profile: {str(e)}")
+            return jsonify({'error': 'Failed to load profile'}), 500
+
+    @app.route('/api/auth/profile', methods=['PUT'])
+    @jwt_required()
+    def update_profile():
+        """Update user profile"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            data = request.get_json()
+            
+            # Update user basic info
+            if 'first_name' in data:
+                user.first_name = data['first_name']
+            if 'last_name' in data:
+                user.last_name = data['last_name']
+            if 'email' in data:
+                user.email = data['email']
+            
+            # Update or create profile
+            profile = user.profile
+            if not profile:
+                profile = UserProfile(user_id=user.id)
+                db.session.add(profile)
+            
+            if 'profile' in data:
+                profile_data = data['profile']
+                if 'grade_level' in profile_data:
+                    profile.grade_level = profile_data['grade_level']
+                if 'school' in profile_data:
+                    profile.school = profile_data['school']
+                if 'preferred_language' in profile_data:
+                    profile.preferred_language = profile_data['preferred_language']
+                if 'subjects' in profile_data:
+                    subjects = profile_data['subjects']
+                    if isinstance(subjects, list):
+                        profile.subjects = ','.join(subjects)
+                    else:
+                        profile.subjects = str(subjects)
+                if 'bio' in profile_data:
+                    profile.bio = profile_data['bio']
+                if 'avatar_url' in profile_data:
+                    profile.avatar_url = profile_data['avatar_url']
+            
+            db.session.commit()
+            
+            return jsonify({
+                "message": "Profile updated successfully",
+                "profile": {
+                    "id": user.id,
+                    "username": user.email.split('@')[0],
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "grade_level": profile.grade_level,
+                    "school": profile.school,
+                    "preferred_language": profile.preferred_language,
+                    "subjects": profile.subjects.split(',') if profile.subjects else [],
+                    "avatar_url": profile.avatar_url,
+                    "bio": profile.bio
+                }
+            }), 200
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ Error in /api/auth/profile PUT: {str(e)}")
+            return jsonify({'error': 'Failed to update profile'}), 500
+
+    @app.route('/api/profile/avatar', methods=['POST'])
+    @jwt_required()
+    def upload_avatar():
+        """Upload profile avatar"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # For now, return a mock avatar URL
+            # In a real implementation, you'd handle file upload here
+            avatar_url = f"https://ui-avatars.com/api/?name={user.first_name}+{user.last_name}&background=6a11cb&color=fff&size=150&bold=true"
+            
+            # Update profile with avatar URL
+            profile = user.profile
+            if not profile:
+                profile = UserProfile(user_id=user.id)
+                db.session.add(profile)
+            
+            profile.avatar_url = avatar_url
+            db.session.commit()
+            
+            return jsonify({
+                "avatar_url": avatar_url
+            }), 200
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ Error in /api/profile/avatar: {str(e)}")
+            return jsonify({'error': 'Failed to upload avatar'}), 500
+
+    @app.route('/api/profile/preferences', methods=['PUT'])
+    @jwt_required()
+    def update_preferences():
+        """Update user preferences"""
+        try:
+            user_id = get_jwt_identity()
+            data = request.get_json()
+            
+            # For now, just return success since we don't have a preferences table
+            # In a real implementation, you'd store preferences in the database
+            
+            return jsonify({
+                "message": "Preferences updated successfully",
+                "preferences": data.get('preferences', {})
+            }), 200
+        except Exception as e:
+            print(f"❌ Error in /api/profile/preferences: {str(e)}")
+            return jsonify({'error': 'Failed to update preferences'}), 500
+
+    # ========== ADDITIONAL MISSING ENDPOINTS ==========
+    @app.route('/api/achievements', methods=['GET'])
+    @jwt_required()
+    def get_achievements_list():
+        """Get all achievements (for compatibility with frontend)"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # Get user's achievements
+            user_achievements = UserAchievement.query.filter_by(user_id=user_id).all()
+            
+            achievements_list = []
+            for ua in user_achievements:
+                achievements_list.append({
+                    'id': ua.id,
+                    'name': ua.achievement.name if ua.achievement else 'Achievement',
+                    'description': ua.achievement.description if ua.achievement else 'Earned achievement',
+                    'icon': ua.achievement.icon if ua.achievement else '🏆',
+                    'progress': ua.progress,
+                    'completed': ua.progress >= (ua.achievement.criteria_value if ua.achievement and ua.achievement.criteria_value else 100),
+                    'earned_at': ua.earned_at.isoformat() if ua.earned_at else None
+                })
+            
+            return jsonify({
+                "achievements": achievements_list
+            }), 200
+        except Exception as e:
+            print(f"❌ Error in /api/achievements: {str(e)}")
+            return jsonify({'error': 'Failed to load achievements'}), 500
+
+    @app.route('/api/study-stats', methods=['GET'])
+    @jwt_required()
+    def get_study_stats():
+        """Get study statistics (for compatibility with frontend)"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            progress = user.progress
+            
+            stats = {
+                "total_study_time": 12.5,  # This would be calculated from actual data
+                "completed_lessons": progress.lessons_completed if progress else 0,
+                "games_played": progress.games_completed if progress else 0,
+                "quizzes_completed": progress.quizzes_completed if progress else 0
+            }
+            
+            return jsonify(stats), 200
+        except Exception as e:
+            print(f"❌ Error in /api/study-stats: {str(e)}")
+            return jsonify({'error': 'Failed to load study stats'}), 500
+
+    @app.route('/api/recent-activity', methods=['GET'])
+    @jwt_required()
+    def get_recent_activity_list():
+        """Get recent activity (for compatibility with frontend)"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # Get recent activities
+            recent_games = GameSession.query.filter_by(user_id=user_id).order_by(
+                GameSession.played_at.desc()
+            ).limit(5).all()
+            
+            recent_quizzes = QuizAttempt.query.filter_by(user_id=user_id).order_by(
+                QuizAttempt.attempted_at.desc()
+            ).limit(5).all()
+            
+            activities_list = []
+            
+            # Add game activities
+            for game in recent_games:
+                activities_list.append({
+                    'id': f'game_{game.id}',
+                    'type': 'game',
+                    'title': f'Game: {game.game.title if game.game else "Unknown"}',
+                    'description': f'Scored {game.score} points',
+                    'timestamp': game.played_at.isoformat() if game.played_at else datetime.utcnow().isoformat(),
+                    'points': game.score
+                })
+            
+            # Add quiz activities
+            for quiz in recent_quizzes:
+                activities_list.append({
+                    'id': f'quiz_{quiz.id}',
+                    'type': 'quiz',
+                    'title': f'Quiz: {quiz.quiz.title if quiz.quiz else "Unknown"}',
+                    'description': f'Score: {quiz.score}%',
+                    'timestamp': quiz.attempted_at.isoformat() if quiz.attempted_at else datetime.utcnow().isoformat(),
+                    'points': quiz.score
+                })
+            
+            # Sort by timestamp
+            activities_list.sort(key=lambda x: x['timestamp'], reverse=True)
+            activities_list = activities_list[:5]
+            
+            return jsonify({
+                "activities": activities_list
+            }), 200
+        except Exception as e:
+            print(f"❌ Error in /api/recent-activity: {str(e)}")
+            return jsonify({'error': 'Failed to load recent activity'}), 500
+
+    # ========== AI ENDPOINTS ==========
+    @app.route('/api/ai/generate-content', methods=['POST'])
+    @jwt_required()
+    def generate_ai_content():
+        """Generate educational content using AI"""
+        try:
+            user_id = get_jwt_identity()
+            data = request.get_json()
+            
+            content_type = data.get('type')  # 'lesson', 'quiz', 'game', 'challenge', 'explanation'
+            parameters = data.get('parameters', {})
+            
+            if not content_type:
+                return jsonify({'error': 'Content type is required'}), 400
+            
+            print(f"🧠 Generating AI content: {content_type} for user {user_id}")
+            
+            content = ai_service.generate_educational_content(content_type, parameters)
+            
+            return jsonify({
+                'status': 'success',
+                'content': content,
+                'type': content_type,
+                'ai_generated': content.get('ai_generated', False)
+            }), 200
+            
+        except Exception as e:
+            print(f"❌ AI content generation error: {str(e)}")
+            return jsonify({'error': f'AI content generation failed: {str(e)}'}), 500
+
+    @app.route('/api/ai/analyze-solution', methods=['POST'])
+    @jwt_required()
+    def analyze_solution():
+        """Analyze student solution using AI"""
+        try:
+            user_id = get_jwt_identity()
+            data = request.get_json()
+            
+            challenge_description = data.get('challenge_description')
+            solution_code = data.get('solution_code')
+            requirements = data.get('requirements', {})
+            
+            if not challenge_description or not solution_code:
+                return jsonify({'error': 'Challenge description and solution code are required'}), 400
+            
+            print(f"🔍 Analyzing solution for user {user_id}")
+            
+            analysis = ai_service.analyze_solution(challenge_description, solution_code, requirements)
+            
+            return jsonify({
+                'status': 'success',
+                'analysis': analysis,
+                'ai_analyzed': True
+            }), 200
+            
+        except Exception as e:
+            print(f"❌ Solution analysis error: {str(e)}")
+            return jsonify({'error': f'Solution analysis failed: {str(e)}'}), 500
+
+    @app.route('/api/ai/generate-hint', methods=['POST'])
+    @jwt_required()
+    def generate_hint():
+        """Generate hint using AI"""
+        try:
+            user_id = get_jwt_identity()
+            data = request.get_json()
+            
+            challenge_description = data.get('challenge_description')
+            difficulty = data.get('difficulty', 'medium')
+            current_approach = data.get('current_approach', '')
+            
+            if not challenge_description:
+                return jsonify({'error': 'Challenge description is required'}), 400
+            
+            print(f"💡 Generating hint for user {user_id}")
+            
+            hint = ai_service.generate_hint(challenge_description, difficulty, current_approach)
+            
+            return jsonify({
+                'status': 'success',
+                'hint': hint,
+                'ai_generated': True
+            }), 200
+            
+        except Exception as e:
+            print(f"❌ Hint generation error: {str(e)}")
+            return jsonify({'error': f'Hint generation failed: {str(e)}'}), 500
+
+    # ========== AUTH ENDPOINTS ==========
+    @app.route('/api/auth/signup', methods=['POST'])
+    def signup():
+        try:
+            print("📝 Signup endpoint hit!")
+            
+            if not request.is_json:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Missing JSON in request'
+                }), 400
+                
+            data = request.get_json()
+            print("📝 Signup data received:", data)
+            
+            if not data:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'No data provided'
+                }), 400
+            
+            # Validate required fields
+            required_fields = ['email', 'password', 'first_name', 'last_name']
+            for field in required_fields:
+                if not data.get(field):
+                    return jsonify({
+                        'status': 'error',
+                        'message': f'{field.replace("_", " ").title()} is required'
+                    }), 400
+            
+            email = data['email'].lower().strip()
+            password = data['password']
+            first_name = data['first_name'].strip()
+            last_name = data['last_name'].strip()
+            
+            # Check if user already exists
+            existing_user = User.query.filter_by(email=email).first()
+            if existing_user:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'User with this email already exists'
+                }), 409
+            
+            # Create user
+            hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
+            user = User(
+                email=email,
+                password=hashed_password,
+                first_name=first_name,
+                last_name=last_name
+            )
+            db.session.add(user)
+            db.session.flush()  # Get user ID without committing
+            
+            # Create user progress
+            progress = UserProgress(user_id=user.id)
+            db.session.add(progress)
+            
+            # Create profile if profile data provided
+            profile_data = data.get('profile', {})
+            if profile_data:
+                subjects_list = profile_data.get('subjects', [])
+                subjects_str = ','.join(subjects_list) if isinstance(subjects_list, list) else str(subjects_list)
+                
+                profile = UserProfile(
+                    user_id=user.id,
+                    grade_level=profile_data.get('grade_level'),
+                    school=profile_data.get('school'),
+                    preferred_language=profile_data.get('preferred_language', 'English'),
+                    subjects=subjects_str,
+                    is_minor=profile_data.get('is_minor', True),
+                    guardian_name=profile_data.get('guardian_name'),
+                    guardian_email=profile_data.get('guardian_email'),
+                    guardian_phone=profile_data.get('guardian_phone', '')
+                )
+                db.session.add(profile)
+            
+            db.session.commit()
+            
+            # Create tokens
+            access_token = create_access_token(identity=user.id)
+            refresh_token = create_refresh_token(identity=user.id)
+            
+            print(f"✅ User registered successfully: {user.id} - {user.email}")
+            
+            return jsonify({
+                'status': 'success',
+                'message': 'User registered successfully',
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name
+                }
+            }), 201
+            
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ Signup error: {str(e)}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Internal server error during registration'
+            }), 500
+    
+    @app.route('/api/auth/signin', methods=['POST'])
+    def signin():
+        try:
+            if not request.is_json:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Missing JSON in request'
+                }), 400
+                
+            data = request.get_json()
+            print("🔐 Signin attempt for:", data.get('email'))
+            
+            email = data.get('email', '').lower().strip()
+            password = data.get('password', '')
+            
+            if not email or not password:
+                return jsonify({
+                    'status': 'error', 
+                    'message': 'Email and password are required'
+                }), 400
+            
+            # Find user
+            user = User.query.filter_by(email=email).first()
+            if not user:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Invalid email or password'
+                }), 401
+            
+            # Check password
+            if not bcrypt.check_password_hash(user.password, password):
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Invalid email or password'
+                }), 401
+            
+            # Create tokens
+            access_token = create_access_token(identity=user.id)
+            refresh_token = create_refresh_token(identity=user.id)
+            
+            print(f"✅ User signed in successfully: {user.id}")
+            
+            return jsonify({
+                'status': 'success',
+                'message': 'Login successful',
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name
+                }
+            }), 200
+            
+        except Exception as e:
+            print(f"❌ Signin error: {str(e)}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Internal server error during login'
+            }), 500
+
+    @app.route('/api/auth/me', methods=['GET'])
+    @jwt_required()
+    def get_current_user():
+        """Get current user information"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+                
+            return jsonify({
+                'user': {
+                    'id': user.id,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'email': user.email,
+                    'username': user.email.split('@')[0],
+                    'created_at': user.created_at.isoformat() if user.created_at else None
+                }
+            }), 200
+        except Exception as e:
+            print(f"❌ Error in /api/auth/me: {str(e)}")
+            return jsonify({'error': 'Internal server error'}), 500
+
+    @app.route('/api/auth/forgot-password', methods=['POST'])
+    def forgot_password():
+        """Initiate password reset"""
+        try:
+            data = request.get_json()
+            email = data.get('email', '').lower().strip()
+            
+            if not email:
+                return jsonify({'error': 'Email is required'}), 400
+            
+            user = User.query.filter_by(email=email).first()
+            if user:
+                # In a real app, send email with reset token
+                print(f"Password reset requested for: {email}")
+                # For now, just return success
+                return jsonify({
+                    'message': 'If an account with that email exists, a reset link has been sent.'
+                }), 200
+            else:
+                # Still return success to prevent email enumeration
+                return jsonify({
+                    'message': 'If an account with that email exists, a reset link has been sent.'
+                }), 200
+                
+        except Exception as e:
+            print(f"❌ Error in /api/auth/forgot-password: {str(e)}")
+            return jsonify({'error': 'Internal server error'}), 500
+
+    @app.route('/api/auth/logout', methods=['POST'])
+    @jwt_required()
+    def logout():
+        """Logout user - currently JWT logout is client-side"""
+        try:
+            # With JWT, logout is typically handled client-side by removing tokens
+            # You could implement token blacklisting here if needed
+            
+            return jsonify({'message': 'Logged out successfully'}), 200
+            
+        except Exception as e:
+            print(f"❌ Error in /api/auth/logout: {str(e)}")
+            return jsonify({'error': 'Logout failed'}), 500
+
+    # ========== AI-POWERED DASHBOARD ENDPOINTS ==========
+    @app.route('/api/dashboard/stats', methods=['GET'])
+    @jwt_required()
+    def get_dashboard_stats():
+        """Get dashboard statistics with AI-powered insights"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            progress = user.progress
+            
+            # Safe data extraction with defaults
+            lessons_completed = progress.lessons_completed if progress else 0
+            games_completed = progress.games_completed if progress else 0
+            quizzes_completed = progress.quizzes_completed if progress else 0
+            current_streak = progress.current_streak if progress else 0
+            total_points = progress.total_points if progress else 0
+            level = progress.level if progress else 1
+            experience = progress.experience if progress else 0
+            
+            # Use AI to analyze progress and provide insights
+            progress_analysis = ai_service.analyze_progress(
+                user_data={
+                    'first_name': user.first_name,
+                    'lessons_completed': lessons_completed,
+                    'games_completed': games_completed,
+                    'quizzes_completed': quizzes_completed,
+                    'current_streak': current_streak,
+                    'total_points': total_points,
+                    'level': level,
+                    'experience': experience,
+                    'grade_level': user.profile.grade_level if user.profile else '5',
+                    'join_date': user.created_at.strftime('%Y-%m-%d') if user.created_at else '2025-01-01',
+                    'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science']
+                }
+            )
+            
+            stats = [
+                {
+                    'id': '1', 
+                    'title': 'Lessons Completed', 
+                    'value': str(lessons_completed), 
+                    'subtitle': 'This week', 
+                    'change': progress_analysis.get('lessons_change', '+20%'), 
+                    'color': '#4ECDC4',
+                    'ai_insight': progress_analysis.get('lessons_insight', 'Great progress on lessons!')
+                },
+                {
+                    'id': '2', 
+                    'title': 'Study Streak', 
+                    'value': str(current_streak), 
+                    'subtitle': 'Days', 
+                    'change': progress_analysis.get('streak_change', '+2'), 
+                    'color': '#FFD166',
+                    'ai_insight': progress_analysis.get('streak_insight', 'Keep the momentum going!')
+                },
+                {
+                    'id': '3', 
+                    'title': 'Points Earned', 
+                    'value': str(total_points), 
+                    'subtitle': 'Total', 
+                    'change': progress_analysis.get('points_change', '+50'), 
+                    'color': '#FF6B6B',
+                    'ai_insight': progress_analysis.get('points_insight', 'You\'re earning rewards!')
+                },
+                {
+                    'id': '4', 
+                    'title': 'Games Played', 
+                    'value': str(games_completed), 
+                    'subtitle': 'This month', 
+                    'change': progress_analysis.get('games_change', '+25%'), 
+                    'color': '#6A7FDB',
+                    'ai_insight': progress_analysis.get('games_insight', 'Learning through play is effective!')
+                }
+            ]
+            
+            return jsonify({
+                'stats': stats,
+                'ai_overview': progress_analysis.get('overview', ''),
+                'next_level_goal': progress_analysis.get('next_level_goal', ''),
+                'weekly_focus': progress_analysis.get('weekly_focus', ''),
+                'learning_tips': progress_analysis.get('learning_tips', [])
+            }), 200
+        except Exception as e:
+            print(f"❌ Error in /api/dashboard/stats: {str(e)}")
+            # AI-only fallback
+            try:
+                fallback_stats = ai_service._get_fallback_progress_analysis()
+                return jsonify({
+                    'stats': [
+                        {'id': '1', 'title': 'Lessons Completed', 'value': '0', 'subtitle': 'This week', 'change': '+0%', 'color': '#4ECDC4', 'ai_insight': fallback_stats.get('lessons_insight', '')},
+                        {'id': '2', 'title': 'Study Streak', 'value': '0', 'subtitle': 'Days', 'change': '+0', 'color': '#FFD166', 'ai_insight': fallback_stats.get('streak_insight', '')},
+                        {'id': '3', 'title': 'Points Earned', 'value': '0', 'subtitle': 'Total', 'change': '+0', 'color': '#FF6B6B', 'ai_insight': fallback_stats.get('points_insight', '')},
+                        {'id': '4', 'title': 'Games Played', 'value': '0', 'subtitle': 'This month', 'change': '+0%', 'color': '#6A7FDB', 'ai_insight': fallback_stats.get('games_insight', '')}
+                    ],
+                    'ai_overview': fallback_stats.get('overview', ''),
+                    'next_level_goal': fallback_stats.get('next_level_goal', ''),
+                    'weekly_focus': fallback_stats.get('weekly_focus', '')
+                }), 200
+            except:
+                pass
+            return jsonify({'error': 'Failed to load dashboard stats'}), 500
+
+    @app.route('/api/dashboard/recent-activity', methods=['GET'])
+    @jwt_required()
+    def get_recent_activity():
+        """Get recent user activity with AI-generated insights"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # Get recent activities from database
+            recent_games = GameSession.query.filter_by(user_id=user_id).order_by(
+                GameSession.played_at.desc()
+            ).limit(5).all()
+            
+            recent_quizzes = QuizAttempt.query.filter_by(user_id=user_id).order_by(
+                QuizAttempt.attempted_at.desc()
+            ).limit(5).all()
+            
+            recent_lessons = UserChallenge.query.filter_by(
+                user_id=user_id, 
+                completed=True
+            ).order_by(UserChallenge.completed_at.desc()).limit(5).all()
+            
+            activities_list = []
+            
+            # Add game activities
+            for game in recent_games:
+                activities_list.append({
+                    'id': f'game_{game.id}',
+                    'type': 'game',
+                    'title': f'Game: {game.game.title if game.game else "Unknown"}',
+                    'description': f'Scored {game.score} points',
+                    'time': game.played_at.strftime('%Y-%m-%d %H:%M'),
+                    'icon': 'game-controller',
+                    'completed': game.completed,
+                    'score': game.score,
+                    'duration': game.duration
+                })
+            
+            # Add quiz activities
+            for quiz in recent_quizzes:
+                activities_list.append({
+                    'id': f'quiz_{quiz.id}',
+                    'type': 'quiz',
+                    'title': f'Quiz: {quiz.quiz.title if quiz.quiz else "Unknown"}',
+                    'description': f'Score: {quiz.score}%',
+                    'time': quiz.attempted_at.strftime('%Y-%m-%d %H:%M'),
+                    'icon': 'document-text',
+                    'completed': quiz.completed,
+                    'score': quiz.score,
+                    'correct_answers': quiz.correct_answers
+                })
+            
+            # Add lesson activities
+            for lesson in recent_lessons:
+                activities_list.append({
+                    'id': f'lesson_{lesson.id}',
+                    'type': 'lesson',
+                    'title': f'Challenge: {lesson.challenge.title if lesson.challenge else "Completed"}',
+                    'description': 'Completed learning challenge',
+                    'time': lesson.completed_at.strftime('%Y-%m-%d %H:%M') if lesson.completed_at else 'Recently',
+                    'icon': 'book',
+                    'completed': True,
+                    'points_earned': lesson.challenge.points_reward if lesson.challenge else 0
+                })
+            
+            # Sort by time and limit to 5
+            activities_list.sort(key=lambda x: x['time'], reverse=True)
+            activities_list = activities_list[:5]
+            
+            # Use AI to analyze activity patterns and provide insights
+            if activities_list:
+                activity_analysis = ai_service.analyze_activity_patterns(
+                    activities=activities_list,
+                    user_data={
+                        'first_name': user.first_name,
+                        'grade_level': user.profile.grade_level if user.profile else '5',
+                        'user_level': user.progress.level if user.progress else 1,
+                        'total_points': user.progress.total_points if user.progress else 0
+                    }
+                )
+            else:
+                activity_analysis = ai_service.generate_starter_activities(
+                    user_data={
+                        'first_name': user.first_name,
+                        'grade_level': user.profile.grade_level if user.profile else '5',
+                        'user_level': user.progress.level if user.progress else 1
+                    }
+                )
+            
+            # If no activities, use AI to generate motivational starter activities
+            if not activities_list:
+                starter_activities = ai_service.generate_starter_activities(
+                    user_data={
+                        'first_name': user.first_name,
+                        'grade_level': user.profile.grade_level if user.profile else '5',
+                        'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science'],
+                        'user_level': user.progress.level if user.progress else 1
+                    }
+                )
+                
+                for activity in starter_activities.get('activities', []):
+                    activities_list.append({
+                        'id': f"starter_{activity.get('id', len(activities_list))}",
+                        'type': activity.get('type', 'lesson'),
+                        'title': activity.get('title', 'Get Started'),
+                        'description': activity.get('description', 'Start your learning adventure'),
+                        'time': 'Ready when you are',
+                        'icon': activity.get('icon', 'rocket'),
+                        'completed': False,
+                        'ai_suggested': True,
+                        'action_url': activity.get('action_url')
+                    })
+            
+            return jsonify({
+                'activities': activities_list,
+                'ai_insights': activity_analysis.get('insights', []),
+                'recommendations': activity_analysis.get('recommendations', []),
+                'next_steps': activity_analysis.get('next_steps', [])
+            }), 200
+        except Exception as e:
+            print(f"❌ Error in /api/dashboard/recent-activity: {str(e)}")
+            # AI-only fallback
+            try:
+                fallback_activities = ai_service._get_fallback_activity_analysis()
+                return jsonify({
+                    'activities': [],
+                    'ai_insights': fallback_activities.get('insights', []),
+                    'recommendations': fallback_activities.get('recommendations', []),
+                    'next_steps': fallback_activities.get('next_steps', [])
+                }), 200
+            except:
+                pass
+            return jsonify({'error': 'Failed to load recent activity'}), 500
+
+    @app.route('/api/dashboard/upcoming-challenges', methods=['GET'])
+    @jwt_required()
+    def get_upcoming_challenges():
+        """Get upcoming challenges with AI-personalized recommendations"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # Get user progress for AI personalization
+            progress = user.progress
+            user_level = progress.level if progress else 1
+            completed_lessons = progress.lessons_completed if progress else 0
+            completed_games = progress.games_completed if progress else 0
+            completed_quizzes = progress.quizzes_completed if progress else 0
+            total_points = progress.total_points if progress else 0
+            
+            # Use AI to generate personalized challenges
+            ai_challenges = ai_service.generate_personalized_challenges(
+                user_data={
+                    'first_name': user.first_name,
+                    'grade_level': user.profile.grade_level if user.profile else '5',
+                    'user_level': user_level,
+                    'completed_lessons': completed_lessons,
+                    'completed_games': completed_games,
+                    'completed_quizzes': completed_quizzes,
+                    'total_points': total_points,
+                    'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science'],
+                    'learning_style': 'interactive',
+                    'current_streak': progress.current_streak if progress else 0
+                }
+            )
+            
+            challenges_list = []
+            
+            # Add AI-generated personalized challenges
+            for ai_challenge in ai_challenges.get('challenges', []):
+                challenges_list.append({
+                    'id': f"ai_{ai_challenge.get('id', len(challenges_list))}",
+                    'title': ai_challenge.get('title', 'Personalized Challenge'),
+                    'description': ai_challenge.get('description', 'AI-customized learning challenge'),
+                    'date': ai_challenge.get('date', '2025-11-01'),
+                    'participants': ai_challenge.get('participants', 0),
+                    'difficulty': ai_challenge.get('difficulty', 'medium'),
+                    'category': ai_challenge.get('category', 'general'),
+                    'joined': False,
+                    'ai_generated': True,
+                    'personalized_reason': ai_challenge.get('reason', 'Based on your learning progress'),
+                    'estimated_duration': ai_challenge.get('duration', '15-20 minutes'),
+                    'skills_targeted': ai_challenge.get('skills', []),
+                    'points_reward': ai_challenge.get('points_reward', 100)
+                })
+            
+            # Add real challenges from database
+            real_challenges = Challenge.query.filter(
+                Challenge.is_active == True
+            ).limit(3).all()
+            
+            for challenge in real_challenges:
+                participants = UserChallenge.query.filter_by(
+                    challenge_id=challenge.id
+                ).count()
+                
+                user_joined = UserChallenge.query.filter_by(
+                    user_id=user_id,
+                    challenge_id=challenge.id
+                ).first() is not None
+                
+                challenges_list.append({
+                    'id': challenge.id,
+                    'title': challenge.title,
+                    'description': challenge.description,
+                    'date': challenge.created_at.strftime('%Y-%m-%d'),
+                    'participants': participants,
+                    'difficulty': getattr(challenge, 'difficulty', 'medium'),
+                    'category': getattr(challenge, 'category', 'general'),
+                    'joined': user_joined,
+                    'ai_generated': False,
+                    'points_reward': challenge.points_reward
+                })
+            
+            # If no challenges, use AI to generate more
+            if not challenges_list:
+                fallback_challenges = ai_service.generate_fallback_challenges(
+                    user_data={
+                        'first_name': user.first_name,
+                        'grade_level': user.profile.grade_level if user.profile else '5',
+                        'user_level': user_level
+                    }
+                )
+                
+                for challenge in fallback_challenges.get('challenges', []):
+                    challenges_list.append({
+                        'id': f"fallback_{challenge.get('id', len(challenges_list))}",
+                        'title': challenge.get('title', 'Learning Challenge'),
+                        'description': challenge.get('description', 'Fun educational challenge'),
+                        'date': challenge.get('date', '2025-11-01'),
+                        'participants': challenge.get('participants', 50),
+                        'difficulty': challenge.get('difficulty', 'medium'),
+                        'category': challenge.get('category', 'mathematics'),
+                        'joined': False,
+                        'ai_generated': True,
+                        'points_reward': challenge.get('points_reward', 100)
+                    })
+            
+            return jsonify({
+                'challenges': challenges_list,
+                'ai_recommendations': ai_challenges.get('recommendations', []),
+                'learning_path': ai_challenges.get('learning_path', [])
+            }), 200
+        except Exception as e:
+            print(f"❌ Error in /api/dashboard/upcoming-challenges: {str(e)}")
+            # AI-only fallback
+            try:
+                fallback_challenges = ai_service._get_fallback_challenges()
+                return jsonify({
+                    'challenges': fallback_challenges.get('challenges', []),
+                    'ai_recommendations': fallback_challenges.get('recommendations', []),
+                    'learning_path': fallback_challenges.get('learning_path', [])
+                }), 200
+            except:
+                pass
+            return jsonify({'error': 'Failed to load challenges'}), 500
+
+    @app.route('/api/dashboard/achievements', methods=['GET'])
+    @jwt_required()
+    def get_achievements():
+        """Get user achievements with AI-generated insights"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # Get user progress data for AI context
+            progress = user.progress
+            lessons_completed = progress.lessons_completed if progress else 0
+            games_completed = progress.games_completed if progress else 0
+            quizzes_completed = progress.quizzes_completed if progress else 0
+            current_streak = progress.current_streak if progress else 0
+            total_points = progress.total_points if progress else 0
+            level = progress.level if progress else 1
+            
+            # Use AI to generate personalized achievement suggestions
+            ai_achievements = ai_service.generate_personalized_achievements(
+                user_data={
+                    'first_name': user.first_name,
+                    'grade_level': user.profile.grade_level if user.profile else '5',
+                    'lessons_completed': lessons_completed,
+                    'games_completed': games_completed,
+                    'quizzes_completed': quizzes_completed,
+                    'current_streak': current_streak,
+                    'total_points': total_points,
+                    'level': level,
+                    'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science'],
+                    'join_date': user.created_at.strftime('%Y-%m-%d') if user.created_at else '2025-01-01'
+                }
+            )
+            
+            # Get actual achievements from database
+            user_achievements = UserAchievement.query.filter_by(user_id=user_id).all()
+            
+            achievements_list = []
+            
+            # Add real achievements
+            for ua in user_achievements:
+                achievements_list.append({
+                    'id': ua.id,
+                    'name': ua.achievement.name if ua.achievement else 'Achievement',
+                    'description': ua.achievement.description if ua.achievement else 'Earned achievement',
+                    'icon': ua.achievement.icon if ua.achievement else '🏆',
+                    'progress': ua.progress,
+                    'completed': ua.progress >= (ua.achievement.criteria_value if ua.achievement and ua.achievement.criteria_value else 100),
+                    'earned_at': ua.earned_at.isoformat() if ua.earned_at else None,
+                    'ai_generated': False
+                })
+            
+            # Add AI-generated achievement suggestions
+            for ai_achievement in ai_achievements.get('suggested_achievements', []):
+                achievements_list.append({
+                    'id': f"ai_{ai_achievement.get('id', len(achievements_list))}",
+                    'name': ai_achievement.get('name', 'Suggested Goal'),
+                    'description': ai_achievement.get('description', 'AI-suggested goal based on your progress'),
+                    'icon': ai_achievement.get('icon', '🎯'),
+                    'progress': ai_achievement.get('progress', 0),
+                    'completed': False,
+                    'earned_at': None,
+                    'ai_generated': True,
+                    'motivational_message': ai_achievement.get('motivational_message')
+                })
+            
+            # If no achievements, use AI to generate starter achievements
+            if not achievements_list:
+                starter_achievements = ai_service.generate_starter_achievements(
+                    user_data={
+                        'first_name': user.first_name,
+                        'grade_level': user.profile.grade_level if user.profile else '5',
+                        'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science']
+                    }
+                )
+                
+                for achievement in starter_achievements.get('achievements', []):
+                    achievements_list.append({
+                        'id': f"starter_{achievement.get('id', len(achievements_list))}",
+                        'name': achievement.get('name', 'Learning Goal'),
+                        'description': achievement.get('description', 'Start your learning journey'),
+                        'icon': achievement.get('icon', '🚀'),
+                        'progress': achievement.get('progress', 0),
+                        'completed': False,
+                        'earned_at': None,
+                        'ai_generated': True
+                    })
+            
+            return jsonify({
+                'achievements': achievements_list,
+                'ai_insights': ai_achievements.get('insights', []),
+                'motivational_quote': ai_achievements.get('motivational_quote', 'Keep learning and growing!')
+            }), 200
+        except Exception as e:
+            print(f"❌ Error in /api/dashboard/achievements: {str(e)}")
+            # AI-only fallback
+            try:
+                fallback_achievements = ai_service._get_fallback_achievements()
+                return jsonify({
+                    'achievements': fallback_achievements.get('suggested_achievements', []),
+                    'ai_insights': fallback_achievements.get('insights', []),
+                    'motivational_quote': fallback_achievements.get('motivational_quote', '')
+                }), 200
+            except:
+                pass
+            return jsonify({'error': 'Failed to load achievements'}), 500
+
+    @app.route('/api/dashboard/complete-activity', methods=['POST'])
+    @jwt_required()
+    def complete_activity():
+        """Mark an activity as completed"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+                
+            data = request.get_json()
+            activity_id = data.get('activity_id')
+            
+            print(f"✅ Activity {activity_id} marked as completed for user {user_id}")
+            
+            # Update user progress
+            progress = user.progress
+            if progress:
+                progress.lessons_completed += 1
+                progress.total_points += 10
+                progress.last_activity_date = datetime.utcnow()
+                db.session.commit()
+            
+            return jsonify({
+                'message': 'Activity completed successfully',
+                'activity_id': activity_id,
+                'points_earned': 10
+            }), 200
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ Error in /api/dashboard/complete-activity: {str(e)}")
+            return jsonify({'error': 'Internal server error'}), 500
+
+    # ========== AI-POWERED CONTENT ENDPOINTS ==========
+    @app.route('/api/lessons', methods=['GET'])
+    @jwt_required()
+    def get_lessons():
+        """Get AI-generated personalized lessons"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            progress = user.progress
+            
+            # Generate AI-powered lessons
+            ai_lessons = ai_service.generate_personalized_lessons({
+                'first_name': user.first_name,
+                'grade_level': user.profile.grade_level if user.profile else '5',
+                'user_level': progress.level if progress else 1,
+                'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science'],
+                'learning_style': 'interactive',
+                'lessons_completed': progress.lessons_completed if progress else 0,
+                'strengths': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['general']
+            })
+            
+            # Transform to match frontend structure
+            lessons_list = []
+            for lesson in ai_lessons.get('lessons', []):
+                lessons_list.append({
+                    'id': lesson.get('id', len(lessons_list) + 1),
+                    'title': lesson.get('title', 'Personalized Lesson'),
+                    'description': lesson.get('description', 'AI-generated lesson based on your learning profile'),
+                    'subject': lesson.get('subject', 'general'),
+                    'grade_level': lesson.get('grade_level', '5'),
+                    'difficulty': lesson.get('difficulty', 'beginner'),
+                    'duration': lesson.get('duration_minutes', 30),
+                    'thumbnail_url': f"https://example.com/thumbnails/{lesson.get('subject', 'general')}.jpg",
+                    'content_url': f"/lessons/{lesson.get('id', 1)}",
+                    'completed': False,
+                    'ai_generated': True,
+                    'personalized_reason': lesson.get('personalized_reason', 'Tailored to your learning style'),
+                    'learning_objectives': lesson.get('learning_objectives', [])
+                })
+            
+            return jsonify({
+                'lessons': lessons_list,
+                'ai_generated': True,
+                'personalized_for': user.first_name
+            }), 200
+            
+        except Exception as e:
+            print(f"❌ Error in /api/lessons: {str(e)}")
+            return jsonify({'error': 'Failed to generate personalized lessons'}), 500
+
+    @app.route('/api/lessons/<int:lesson_id>', methods=['GET'])
+    @jwt_required()
+    def get_lesson(lesson_id):
+        """Get specific AI-generated lesson content"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # Generate detailed lesson content using AI
+            lesson_content = ai_service.generate_educational_content(
+                'lesson',
+                {
+                    'user_id': user_id,
+                    'first_name': user.first_name,
+                    'grade_level': user.profile.grade_level if user.profile else '5',
+                    'user_level': user.progress.level if user.progress else 1,
+                    'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science'],
+                    'lesson_id': lesson_id
+                }
+            )
+            
+            lesson_data = {
+                'id': lesson_id,
+                'title': lesson_content.get('title', f'Personalized Lesson {lesson_id}'),
+                'description': lesson_content.get('description', 'AI-generated lesson content'),
+                'subject': lesson_content.get('subject', 'general'),
+                'grade_level': lesson_content.get('grade_level', '5'),
+                'difficulty': lesson_content.get('difficulty', 'beginner'),
+                'duration': lesson_content.get('duration_minutes', 30),
+                'content_url': f"/lessons/{lesson_id}/content",
+                'thumbnail_url': f"https://example.com/thumbnails/lesson_{lesson_id}.jpg",
+                'learning_objectives': lesson_content.get('learning_objectives', []),
+                'key_concepts': lesson_content.get('key_concepts', []),
+                'practice_problems': lesson_content.get('practice_problems', []),
+                'ai_generated': True,
+                'personalized_for': user.first_name
+            }
+            
+            return jsonify(lesson_data), 200
+        except Exception as e:
+            print(f"❌ Error in /api/lessons/{lesson_id}: {str(e)}")
+            return jsonify({'error': 'Failed to generate lesson content'}), 500
+
+    @app.route('/api/games', methods=['GET'])
+    @jwt_required()
+    def get_games():
+        """Get AI-generated personalized games"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            progress = user.progress
+            
+            # Generate AI-powered games
+            ai_games = ai_service.generate_personalized_games({
+                'first_name': user.first_name,
+                'grade_level': user.profile.grade_level if user.profile else '5',
+                'user_level': progress.level if progress else 1,
+                'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science'],
+                'learning_style': 'interactive',
+                'games_completed': progress.games_completed if progress else 0
+            })
+            
+            # Transform to match frontend structure
+            games_list = []
+            for game in ai_games.get('games', []):
+                games_list.append({
+                    'id': game.get('id', len(games_list) + 1),
+                    'title': game.get('title', 'Educational Game'),
+                    'description': game.get('description', 'AI-generated game based on your interests'),
+                    'category': game.get('category', 'general'),
+                    'difficulty': game.get('difficulty', 'easy'),
+                    'max_players': 1,
+                    'game_url': f"/games/{game.get('id', 1)}",
+                    'thumbnail_url': f"https://example.com/thumbnails/game_{game.get('id', 1)}.jpg",
+                    'ai_generated': True,
+                    'personalized_reason': game.get('personalized_reason', 'Matches your learning preferences'),
+                    'learning_objectives': game.get('learning_objectives', []),
+                    'estimated_duration': game.get('estimated_duration', '15-20 minutes')
+                })
+            
+            return jsonify({
+                'games': games_list,
+                'ai_generated': True,
+                'personalized_for': user.first_name
+            }), 200
+            
+        except Exception as e:
+            print(f"❌ Error in /api/games: {str(e)}")
+            return jsonify({'error': 'Failed to generate personalized games'}), 500
+
+    @app.route('/api/games/<int:game_id>', methods=['GET'])
+    @jwt_required()
+    def get_game(game_id):
+        """Get specific AI-generated game content"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # Generate detailed game content using AI
+            game_content = ai_service.generate_educational_content(
+                'game',
+                {
+                    'user_id': user_id,
+                    'first_name': user.first_name,
+                    'grade_level': user.profile.grade_level if user.profile else '5',
+                    'user_level': user.progress.level if user.progress else 1,
+                    'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science'],
+                    'game_id': game_id
+                }
+            )
+            
+            game_data = {
+                'id': game_id,
+                'title': game_content.get('game_title', f'Educational Game {game_id}'),
+                'description': game_content.get('description', 'AI-generated educational game'),
+                'category': game_content.get('subject', 'general'),
+                'difficulty': game_content.get('difficulty', 'easy'),
+                'max_players': 1,
+                'game_url': f"/games/{game_id}/play",
+                'thumbnail_url': f"https://example.com/thumbnails/game_{game_id}.jpg",
+                'learning_objectives': game_content.get('learning_objectives', []),
+                'game_mechanics': game_content.get('game_mechanics', 'Interactive learning challenges'),
+                'ai_generated': True,
+                'personalized_for': user.first_name
+            }
+            
+            return jsonify(game_data), 200
+        except Exception as e:
+            print(f"❌ Error in /api/games/{game_id}: {str(e)}")
+            return jsonify({'error': 'Failed to generate game content'}), 500
+
+    @app.route('/api/quizzes', methods=['GET'])
+    @jwt_required()
+    def get_quizzes():
+        """Get AI-generated personalized quizzes"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            progress = user.progress
+            
+            # Generate AI-powered quizzes
+            ai_quizzes = ai_service.generate_personalized_quizzes({
+                'first_name': user.first_name,
+                'grade_level': user.profile.grade_level if user.profile else '5',
+                'user_level': progress.level if progress else 1,
+                'recent_lessons': ['foundational concepts'],
+                'strengths': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['general knowledge'],
+                'improvement_areas': ['new topics']
+            })
+            
+            # Transform to match frontend structure
+            quizzes_list = []
+            for quiz in ai_quizzes.get('quizzes', []):
+                quizzes_list.append({
+                    'id': quiz.get('id', len(quizzes_list) + 1),
+                    'title': quiz.get('title', 'Knowledge Check'),
+                    'description': quiz.get('description', 'AI-generated quiz based on your learning progress'),
+                    'subject': quiz.get('subject', 'general'),
+                    'difficulty': quiz.get('difficulty', 'medium'),
+                    'time_limit': quiz.get('time_limit_minutes', 15),
+                    'total_questions': quiz.get('total_questions', 8),
+                    'ai_generated': True,
+                    'personalized_reason': quiz.get('personalized_reason', 'Reinforces your recent learning'),
+                    'topics_covered': quiz.get('topics_covered', []),
+                    'skills_assessed': quiz.get('skills_assessed', [])
+                })
+            
+            return jsonify({
+                'quizzes': quizzes_list,
+                'ai_generated': True,
+                'personalized_for': user.first_name
+            }), 200
+            
+        except Exception as e:
+            print(f"❌ Error in /api/quizzes: {str(e)}")
+            return jsonify({'error': 'Failed to generate personalized quizzes'}), 500
+
+    @app.route('/api/quizzes/<int:quiz_id>', methods=['GET'])
+    @jwt_required()
+    def get_quiz(quiz_id):
+        """Get specific AI-generated quiz content"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            # Generate detailed quiz content using AI
+            quiz_content = ai_service.generate_educational_content(
+                'quiz',
+                {
+                    'user_id': user_id,
+                    'first_name': user.first_name,
+                    'grade_level': user.profile.grade_level if user.profile else '5',
+                    'user_level': user.progress.level if user.progress else 1,
+                    'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science'],
+                    'quiz_id': quiz_id,
+                    'num_questions': 8,
+                    'difficulty': 'medium'
+                }
+            )
+            
+            quiz_data = {
+                'id': quiz_id,
+                'title': quiz_content.get('quiz_title', f'Quiz {quiz_id}'),
+                'description': quiz_content.get('description', 'AI-generated assessment'),
+                'subject': quiz_content.get('subject', 'general'),
+                'difficulty': quiz_content.get('difficulty', 'medium'),
+                'time_limit': quiz_content.get('time_limit_minutes', 15),
+                'total_questions': quiz_content.get('total_questions', 8),
+                'questions': quiz_content.get('questions', []),
+                'ai_generated': True,
+                'personalized_for': user.first_name
+            }
+            
+            return jsonify(quiz_data), 200
+        except Exception as e:
+            print(f"❌ Error in /api/quizzes/{quiz_id}: {str(e)}")
+            return jsonify({'error': 'Failed to generate quiz content'}), 500
+
+    # ========== AI-POWERED HOME ENDPOINT ==========
+    @app.route('/api/home', methods=['GET'])
+    @jwt_required()
+    def get_home_data():
+        """Get AI-generated personalized home data"""
+        try:
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            
+            progress = user.progress
+            
+            # Generate multiple AI-powered content for home screen
+            ai_lessons = ai_service.generate_personalized_lessons({
+                'first_name': user.first_name,
+                'grade_level': user.profile.grade_level if user.profile else '5',
+                'user_level': progress.level if progress else 1,
+                'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science']
+            })
+            
+            ai_games = ai_service.generate_personalized_games({
+                'first_name': user.first_name,
+                'grade_level': user.profile.grade_level if user.profile else '5',
+                'user_level': progress.level if progress else 1,
+                'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science']
+            })
+            
+            ai_challenges = ai_service.generate_personalized_challenges({
+                'first_name': user.first_name,
+                'grade_level': user.profile.grade_level if user.profile else '5',
+                'user_level': progress.level if progress else 1,
+                'interests': user.profile.subjects.split(',') if user.profile and user.profile.subjects else ['mathematics', 'science']
+            })
+            
+            # Get progress analysis for insights
+            progress_analysis = ai_service.analyze_progress({
+                'first_name': user.first_name,
+                'grade_level': user.profile.grade_level if user.profile else '5',
+                'level': progress.level if progress else 1,
+                'lessons_completed': progress.lessons_completed if progress else 0,
+                'games_completed': progress.games_completed if progress else 0,
+                'quizzes_completed': progress.quizzes_completed if progress else 0,
+                'current_streak': progress.current_streak if progress else 0,
+                'total_points': progress.total_points if progress else 0
+            })
+            
+            home_data = {
+                'welcome_message': f"Welcome back, {user.first_name}! Ready to continue your personalized learning journey?",
+                'quick_stats': {
+                    'current_streak': progress.current_streak if progress else 0,
+                    'total_points': progress.total_points if progress else 0,
+                    'level': progress.level if progress else 1,
+                    'ai_personalized': True
+                },
+                'featured_lessons': ai_lessons.get('lessons', [])[:2],
+                'recommended_games': ai_games.get('games', [])[:2],
+                'daily_challenge': ai_challenges.get('challenges', [])[0] if ai_challenges.get('challenges') else {
+                    'title': 'Learning Starter',
+                    'description': 'Begin your personalized learning journey',
+                    'points': 100,
+                    'completed': False
+                },
+                'ai_insights': progress_analysis.get('learning_tips', []),
+                'personalized_recommendations': ai_challenges.get('recommendations', []),
+                'ai_generated': True
+            }
+            
+            return jsonify(home_data), 200
+            
+        except Exception as e:
+            print(f"❌ Error in /api/home: {str(e)}")
+            return jsonify({'error': 'Failed to generate personalized home data'}), 500
+
+    # ========== HEALTH & UTILITY ENDPOINTS ==========
+    @app.route('/api/health')
+    def health_check():
+        return jsonify({
+            'status': 'healthy', 
+            'message': 'EduPlay Backend Server is running',
+            'version': '1.0.0',
+            'timestamp': datetime.utcnow().isoformat()
+        })
+
+    @app.route('/api/test')
+    def test_api():
+        return jsonify({
+            'message': 'EduPlay API is working!',
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    
+    @app.route('/')
+    def root():
+        return jsonify({
+            'message': 'EduPlay Backend API',
+            'version': '1.0.0',
+            'endpoints': {
+                'ai': {
+                    'generate_content': 'POST /api/ai/generate-content',
+                    'analyze_solution': 'POST /api/ai/analyze-solution',
+                    'generate_hint': 'POST /api/ai/generate-hint'
+                },
+                'auth': {
+                    'signup': 'POST /api/auth/signup',
+                    'signin': 'POST /api/auth/signin',
+                    'me': 'GET /api/auth/me',
+                    'profile': 'GET/PUT /api/auth/profile',
+                    'forgot_password': 'POST /api/auth/forgot-password',
+                    'logout': 'POST /api/auth/logout'
+                },
+                'profile': {
+                    'avatar': 'POST /api/profile/avatar',
+                    'preferences': 'PUT /api/profile/preferences'
+                },
+                'dashboard': {
+                    'stats': 'GET /api/dashboard/stats',
+                    'recent_activity': 'GET /api/dashboard/recent-activity',
+                    'upcoming_challenges': 'GET /api/dashboard/upcoming-challenges',
+                    'achievements': 'GET /api/dashboard/achievements',
+                    'complete_activity': 'POST /api/dashboard/complete-activity'
+                },
+                'content': {
+                    'lessons': 'GET /api/lessons',
+                    'lesson_detail': 'GET /api/lessons/<id>',
+                    'games': 'GET /api/games',
+                    'game_detail': 'GET /api/games/<id>',
+                    'quizzes': 'GET /api/quizzes',
+                    'quiz_detail': 'GET /api/quizzes/<id>'
+                },
+                'additional': {
+                    'achievements': 'GET /api/achievements',
+                    'study_stats': 'GET /api/study-stats',
+                    'recent_activity': 'GET /api/recent-activity',
+                    'home': 'GET /api/home'
+                },
+                'general': {
+                    'health': 'GET /api/health',
+                    'test': 'GET /api/test'
+                }
+            }
+        })
+
+    # ========== CATCH-ALL FOR UNDEFINED ENDPOINTS ==========
+    @app.route('/api/<path:path>')
+    def catch_all(path):
+        """Catch-all route for undefined API endpoints"""
+        return jsonify({
+            "error": f"Endpoint /api/{path} not found",
+            "available_endpoints": [
+                "/api/auth/signup",
+                "/api/auth/signin", 
+                "/api/auth/me",
+                "/api/auth/profile",
+                "/api/auth/forgot-password",
+                "/api/auth/logout",
+                "/api/dashboard/stats",
+                "/api/dashboard/recent-activity", 
+                "/api/dashboard/upcoming-challenges",
+                "/api/dashboard/achievements",
+                "/api/profile/avatar",
+                "/api/profile/preferences",
+                "/api/achievements",
+                "/api/study-stats",
+                "/api/recent-activity",
+                "/api/lessons",
+                "/api/games", 
+                "/api/quizzes",
+                "/api/ai/generate-content",
+                "/api/ai/analyze-solution",
+                "/api/ai/generate-hint",
+                "/api/home",
+                "/api/health"
+            ]
+        }), 404
+
+    # Create database tables and sample data
+    with app.app_context():
+        db.create_all()
+        print("✅ Database tables created successfully!")
+        
+        # Create sample data if tables are empty
+        if Lesson.query.count() == 0:
+            sample_lessons = [
+                Lesson(
+                    title='Mathematics Basics',
+                    description='Learn fundamental mathematics concepts including addition, subtraction, multiplication and division.',
+                    subject='Mathematics',
+                    grade_level='Elementary',
+                    difficulty='beginner',
+                    duration=30,
+                    thumbnail_url='https://example.com/math-basics.jpg',
+                    content_url='https://example.com/lessons/math-basics'
+                ),
+                Lesson(
+                    title='Introduction to Science',
+                    description='Explore the wonders of science through fun experiments and interactive lessons.',
+                    subject='Science',
+                    grade_level='Elementary',
+                    difficulty='beginner', 
+                    duration=45,
+                    thumbnail_url='https://example.com/science-intro.jpg',
+                    content_url='https://example.com/lessons/science-intro'
+                ),
+                Lesson(
+                    title='English Grammar Fundamentals',
+                    description='Master the basics of English grammar including nouns, verbs, adjectives and sentence structure.',
+                    subject='English',
+                    grade_level='Elementary',
+                    difficulty='beginner',
+                    duration=40,
+                    thumbnail_url='https://example.com/english-grammar.jpg',
+                    content_url='https://example.com/lessons/english-grammar'
+                )
+            ]
+            db.session.add_all(sample_lessons)
+        
+        if Game.query.count() == 0:
+            sample_games = [
+                Game(
+                    title='Math Puzzle Adventure',
+                    description='Solve math puzzles to advance through exciting levels and unlock new challenges.',
+                    category='Mathematics',
+                    difficulty='easy',
+                    max_players=1,
+                    game_url='https://example.com/games/math-puzzle',
+                    thumbnail_url='https://example.com/math-puzzle.jpg'
+                ),
+                Game(
+                    title='Science Explorer',
+                    description='Discover scientific concepts through interactive exploration and experiments.',
+                    category='Science',
+                    difficulty='medium',
+                    max_players=1,
+                    game_url='https://example.com/games/science-explorer',
+                    thumbnail_url='https://example.com/science-explorer.jpg'
+                ),
+                Game(
+                    title='Word Builder Challenge',
+                    description='Build words and expand your vocabulary in this engaging language game.',
+                    category='English',
+                    difficulty='easy',
+                    max_players=2,
+                    game_url='https://example.com/games/word-builder',
+                    thumbnail_url='https://example.com/word-builder.jpg'
+                )
+            ]
+            db.session.add_all(sample_games)
+        
+        if Quiz.query.count() == 0:
+            sample_quizzes = [
+                Quiz(
+                    title='Basic Math Quiz',
+                    description='Test your fundamental math skills with this beginner-level quiz.',
+                    subject='Mathematics',
+                    difficulty='easy',
+                    time_limit=15,
+                    total_questions=10
+                ),
+                Quiz(
+                    title='Science Knowledge Test',
+                    description='Challenge your science knowledge with questions from various topics.',
+                    subject='Science',
+                    difficulty='medium',
+                    time_limit=20,
+                    total_questions=15
+                ),
+                Quiz(
+                    title='Grammar Master',
+                    description='Prove your English grammar expertise with this comprehensive quiz.',
+                    subject='English',
+                    difficulty='medium',
+                    time_limit=25,
+                    total_questions=12
+                )
+            ]
+            db.session.add_all(sample_quizzes)
+        
+        if Challenge.query.count() == 0:
+            sample_challenges = [
+                Challenge(
+                    title='Weekly Math Marathon',
+                    description='Complete 5 math lessons and 3 math games this week',
+                    challenge_type='mixed',
+                    points_reward=200,
+                    start_date=datetime.utcnow(),
+                    end_date=datetime.utcnow() + timedelta(days=7)
+                ),
+                Challenge(
+                    title='Science Explorer Quest',
+                    description='Finish all science-related content available this month',
+                    challenge_type='lesson',
+                    points_reward=150,
+                    start_date=datetime.utcnow(),
+                    end_date=datetime.utcnow() + timedelta(days=30)
+                ),
+                Challenge(
+                    title='Daily Quiz Champion',
+                    description='Achieve 90% or higher on any quiz today',
+                    challenge_type='quiz',
+                    points_reward=100,
+                    start_date=datetime.utcnow(),
+                    end_date=datetime.utcnow() + timedelta(days=1)
+                )
+            ]
+            db.session.add_all(sample_challenges)
+        
+        if Achievement.query.count() == 0:
+            sample_achievements = [
+                Achievement(
+                    name='Fast Learner',
+                    description='Complete 10 lessons in one week',
+                    icon='🚀',
+                    criteria_type='lessons',
+                    criteria_value=10,
+                    points_reward=50
+                ),
+                Achievement(
+                    name='Math Whiz',
+                    description='Score 100% on 5 math quizzes',
+                    icon='⭐',
+                    criteria_type='quizzes',
+                    criteria_value=5,
+                    points_reward=75
+                ),
+                Achievement(
+                    name='Game Master',
+                    description='Win 10 educational games',
+                    icon='🎮',
+                    criteria_type='games',
+                    criteria_value=10,
+                    points_reward=60
+                ),
+                Achievement(
+                    name='Consistent Learner',
+                    description='Maintain a 7-day study streak',
+                    icon='🔥',
+                    criteria_type='streak',
+                    criteria_value=7,
+                    points_reward=100
+                )
+            ]
+            db.session.add_all(sample_achievements)
+        
+        db.session.commit()
+        print("✅ Sample data created successfully!")
+    
+    return app
+
+# Create the app instance
+app = create_app()
+
+if __name__ == '__main__':
+    print("🚀 Starting EduPlayApp Backend with AI Integration...")
+    print("📍 Server will be available at: http://127.0.0.1:5000")
+    print("🌐 Network access: http://YOUR_LOCAL_IP:5000")
+    print("")
+    print("🤖 AI Endpoints:")
+    print("   POST /api/ai/generate-content  - Generate lessons, quizzes, games")
+    print("   POST /api/ai/analyze-solution  - Analyze student solutions") 
+    print("   POST /api/ai/generate-hint     - Generate hints for challenges")
+    print("")
+    print("📊 Available Endpoints:")
+    print("   AUTH ENDPOINTS:")
+    print("   POST /api/auth/signup          - User registration")
+    print("   POST /api/auth/signin          - User login") 
+    print("   GET  /api/auth/me              - Get current user")
+    print("   GET  /api/auth/profile         - Get user profile")
+    print("   PUT  /api/auth/profile         - Update user profile")
+    print("   POST /api/auth/forgot-password - Forgot password")
+    print("   POST /api/auth/logout          - Logout user")
+    print("")
+    print("   PROFILE ENDPOINTS:")
+    print("   POST /api/profile/avatar       - Upload avatar")
+    print("   PUT  /api/profile/preferences  - Update preferences")
+    print("")
+    print("   DASHBOARD ENDPOINTS:")
+    print("   GET  /api/dashboard/stats      - Dashboard statistics")
+    print("   GET  /api/dashboard/recent-activity - Recent activities")
+    print("   GET  /api/dashboard/upcoming-challenges - Upcoming challenges")
+    print("   GET  /api/dashboard/achievements - User achievements")
+    print("   POST /api/dashboard/complete-activity - Complete activity")
+    print("")
+    print("   ADDITIONAL ENDPOINTS:")
+    print("   GET  /api/achievements         - All achievements")
+    print("   GET  /api/study-stats          - Study statistics")
+    print("   GET  /api/recent-activity      - Recent activity list")
+    print("   GET  /api/home                 - Home screen data")
+    print("")
+    print("   CONTENT ENDPOINTS:")
+    print("   GET  /api/lessons              - Get all lessons")
+    print("   GET  /api/lessons/<id>         - Get specific lesson")
+    print("   GET  /api/games                - Get all games")
+    print("   GET  /api/games/<id>           - Get specific game")
+    print("   GET  /api/quizzes              - Get all quizzes")
+    print("   GET  /api/quizzes/<id>         - Get specific quiz")
+    print("")
+    print("   GENERAL ENDPOINTS:")
+    print("   GET  /api/health               - Health check")
+    print("   GET  /api/test                 - Test endpoint")
+    print("   GET  /                         - API info")
+    print("")
+    print("🔧 Debug mode: ON")
+    print("⚡ Ready to accept connections...")
+    print("")
+    print("💡 Tip: Make sure your React Native app is using the correct API_BASE_URL")
+    print("       API_BASE_URL should be: http://YOUR_LOCAL_IP:5000")
+    
+    app.run(host='0.0.0.0', port=5000, debug=True)

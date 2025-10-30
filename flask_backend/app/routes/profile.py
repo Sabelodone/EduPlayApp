@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import User, UserProfile, UserProgress, ChallengeAttempt, AIInteraction
+from app.models import User, UserProfile, UserChallengeProgress, ChallengeAttempt, AIInteraction, LessonProgress, GameSession
 from app import db
 from datetime import datetime, timedelta
 
@@ -21,17 +21,22 @@ def get_profile():
         if not user.profile:
             user.profile = UserProfile(
                 user_id=user.id,
-                preferred_language='English',
+                grade_level='',
+                school='',
                 is_minor=True
             )
             db.session.add(user.profile)
             db.session.commit()
         
-        # Ensure progress exists
-        if not user.progress:
-            user.progress = UserProgress(user_id=user.id)
-            db.session.add(user.progress)
-            db.session.commit()
+        # Calculate progress stats from existing models
+        total_points = 0
+        lessons_completed = LessonProgress.query.filter_by(user_id=user.id, completed=True).count()
+        games_completed = GameSession.query.filter_by(user_id=user.id, completed=True).count()
+        challenges_completed = UserChallengeProgress.query.filter_by(user_id=user.id, completed=True).count()
+        
+        # Calculate experience based on completed activities
+        experience = (lessons_completed * 100) + (games_completed * 50) + (challenges_completed * 150)
+        level = (experience // 1000) + 1  # Simple level calculation
         
         # Safely handle subjects
         profile = user.profile
@@ -53,23 +58,22 @@ def get_profile():
             'profile': {
                 'grade_level': profile.grade_level or '',
                 'school': profile.school or '',
-                'preferred_language': profile.preferred_language or 'English',
                 'subjects': subjects,
-                'avatar_url': profile.avatar_url or '',
-                'bio': profile.bio or '',
+                'is_minor': profile.is_minor if profile.is_minor else True,
                 'guardian_name': profile.guardian_name or '',
                 'guardian_email': profile.guardian_email or '',
                 'guardian_phone': profile.guardian_phone or ''
             },
             'progress': {
-                'total_points': user.progress.total_points if user.progress else 0,
-                'current_streak': user.progress.current_streak if user.progress else 0,
-                'longest_streak': user.progress.longest_streak if user.progress else 0,
-                'lessons_completed': user.progress.lessons_completed if user.progress else 0,
-                'games_completed': user.progress.games_completed if user.progress else 0,
-                'quizzes_completed': user.progress.quizzes_completed if user.progress else 0,
-                'level': user.progress.level if user.progress else 1,
-                'experience': user.progress.experience if user.progress else 0
+                'total_points': total_points,
+                'current_streak': 0,  # You can implement streak logic later
+                'longest_streak': 0,
+                'lessons_completed': lessons_completed,
+                'games_completed': games_completed,
+                'challenges_completed': challenges_completed,
+                'quizzes_completed': 0,  # You can add quiz logic if needed
+                'level': level,
+                'experience': experience
             }
         }
         
@@ -79,19 +83,34 @@ def get_profile():
         current_app.logger.error(f"Error fetching profile: {str(e)}")
         return jsonify({'error': 'Failed to fetch profile'}), 500
 
-# ADD THESE MISSING ENDPOINTS:
-
 @profile_bp.route('/achievements', methods=['GET'])
 @jwt_required()
 def get_profile_achievements():
     """Get user achievements - for /api/achievements endpoint"""
     try:
         current_user_id = get_jwt_identity()
+        user = User.query.get(current_user_id)
         
-        # Return empty achievements for now, or redirect to dashboard endpoint
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Get user achievements from UserAchievement model
+        achievements = []
+        user_achievements = user.achievements if hasattr(user, 'achievements') else []
+        
+        for achievement in user_achievements:
+            achievements.append({
+                'id': achievement.id,
+                'type': achievement.achievement_type,
+                'title': achievement.achievement_type.replace('_', ' ').title(),
+                'description': f'Achieved {achievement.achievement_type}',
+                'earned_at': achievement.earned_at.isoformat() if achievement.earned_at else None,
+                'icon': 'trophy'
+            })
+        
         return jsonify({
             'success': True,
-            'achievements': []
+            'achievements': achievements
         }), 200
         
     except Exception as e:
@@ -106,21 +125,24 @@ def get_study_stats():
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
         
-        if not user or not user.progress:
-            stats = {
-                'total_study_time': 0,
-                'completed_lessons': 0,
-                'games_played': 0,
-                'quizzes_completed': 0
-            }
-        else:
-            progress = user.progress
-            stats = {
-                'total_study_time': progress.total_points * 10,
-                'completed_lessons': progress.lessons_completed,
-                'games_played': progress.games_completed,
-                'quizzes_completed': progress.quizzes_completed
-            }
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Calculate stats from various models
+        lessons_completed = LessonProgress.query.filter_by(user_id=user.id, completed=True).count()
+        games_played = GameSession.query.filter_by(user_id=user.id).count()
+        challenges_completed = UserChallengeProgress.query.filter_by(user_id=user.id, completed=True).count()
+        
+        # Estimate study time (you can make this more accurate later)
+        total_study_time = (lessons_completed * 30) + (games_played * 15) + (challenges_completed * 45)
+        
+        stats = {
+            'total_study_time': total_study_time,  # in minutes
+            'completed_lessons': lessons_completed,
+            'games_played': games_played,
+            'challenges_completed': challenges_completed,
+            'quizzes_completed': 0  # Add if you have quiz system
+        }
         
         return jsonify({
             'success': True,
@@ -153,16 +175,24 @@ def get_profile_recent_activity():
             AIInteraction.created_at.desc()
         ).limit(limit).all()
         
+        # Get recent lesson progress
+        recent_lessons = LessonProgress.query.filter_by(
+            user_id=current_user_id
+        ).order_by(
+            LessonProgress.last_accessed.desc()
+        ).limit(limit).all()
+        
         activities = []
         
         for attempt in recent_attempts:
             activities.append({
                 'id': f'challenge_{attempt.id}',
                 'type': 'challenge',
-                'title': f'Challenge Attempt',
-                'description': f'{"Completed" if attempt.is_correct else "Attempted"} challenge',
-                'time': attempt.submitted_at.strftime('%Y-%m-%d %H:%M') if attempt.submitted_at else 'Recently',
-                'icon': 'trophy',
+                'title': 'Challenge Attempt',
+                'description': f'{"Completed" if attempt.is_correct else "Attempted"} coding challenge',
+                'time': attempt.submitted_at.isoformat() if attempt.submitted_at else None,
+                'timestamp': attempt.submitted_at,
+                'icon': 'code',
                 'completed': attempt.is_correct
             })
         
@@ -171,15 +201,33 @@ def get_profile_recent_activity():
                 'id': f'ai_{interaction.id}',
                 'type': 'ai_interaction',
                 'title': 'AI Assistance',
-                'description': f'Used {interaction.model_used or "AI"} for help',
-                'time': interaction.created_at.strftime('%Y-%m-%d %H:%M') if interaction.created_at else 'Recently',
-                'icon': 'help-buoy',
+                'description': f'Used AI for {interaction.action}',
+                'time': interaction.created_at.isoformat() if interaction.created_at else None,
+                'timestamp': interaction.created_at,
+                'icon': 'robot',
                 'completed': True
             })
         
-        # If no activities, return empty array
-        if not activities:
-            activities = []
+        for lesson in recent_lessons:
+            if lesson.last_accessed:
+                activities.append({
+                    'id': f'lesson_{lesson.id}',
+                    'type': 'lesson',
+                    'title': 'Lesson Progress',
+                    'description': f'Progress: {lesson.progress * 100:.0f}% on lesson',
+                    'time': lesson.last_accessed.isoformat(),
+                    'timestamp': lesson.last_accessed,
+                    'icon': 'book',
+                    'completed': lesson.completed
+                })
+        
+        # Sort by timestamp and limit
+        activities.sort(key=lambda x: x['timestamp'] if x['timestamp'] else datetime.min, reverse=True)
+        activities = activities[:limit]
+        
+        # Remove timestamp before returning
+        for activity in activities:
+            activity.pop('timestamp', None)
         
         return jsonify({
             'success': True,
@@ -203,6 +251,9 @@ def update_profile():
         
         data = request.get_json()
         
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
         # Update user basic info
         if 'first_name' in data:
             user.first_name = data['first_name']
@@ -221,17 +272,13 @@ def update_profile():
             profile.grade_level = data['grade_level']
         if 'school' in data:
             profile.school = data['school']
-        if 'preferred_language' in data:
-            profile.preferred_language = data['preferred_language']
         if 'subjects' in data:
             if isinstance(data['subjects'], list):
                 profile.subjects = ','.join(data['subjects'])
             else:
                 profile.subjects = str(data['subjects'])
-        if 'avatar_url' in data:
-            profile.avatar_url = data['avatar_url']
-        if 'bio' in data:
-            profile.bio = data['bio']
+        if 'is_minor' in data:
+            profile.is_minor = bool(data['is_minor'])
         if 'guardian_name' in data:
             profile.guardian_name = data['guardian_name']
         if 'guardian_email' in data:
@@ -241,7 +288,11 @@ def update_profile():
         
         db.session.commit()
         
-        return jsonify({'message': 'Profile updated successfully'}), 200
+        return jsonify({
+            'success': True,
+            'message': 'Profile updated successfully',
+            'profile': profile.to_dict()
+        }), 200
         
     except Exception as e:
         db.session.rollback()
