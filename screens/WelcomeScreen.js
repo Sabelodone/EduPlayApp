@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,97 +20,109 @@ export default function WelcomeScreen() {
       useNativeDriver: true,
     }).start();
 
-    // Check if user is already logged in
     checkUserAuth();
   }, []);
 
   const checkUserAuth = async () => {
     try {
       const token = await AsyncStorage.getItem('access_token');
+      console.log('🔐 Auth Check - Token:', token ? 'Exists' : 'None');
+      
       if (token) {
-        // User is logged in, navigate to home
-        setTimeout(() => {
-          navigation.navigate('HomeScreen');
-        }, 1000);
+        // Validate token with backend
+        const isValid = await validateToken(token);
+        if (isValid) {
+          setTimeout(() => {
+            navigation.navigate('HomeScreen');
+          }, 1000);
+        } else {
+          // Invalid token, clear it
+          await AsyncStorage.removeItem('access_token');
+          await AsyncStorage.removeItem('user_data');
+        }
       }
     } catch (error) {
       console.error('Error checking auth status:', error);
     }
   };
 
-  const handleGuestAccess = async () => {
+  const validateToken = async (token) => {
     try {
-      // Set guest flag in storage
-      await AsyncStorage.setItem('is_guest', 'true');
-      // Navigate to home screen
-      navigation.navigate('HomeScreen');
+      const response = await fetch('http://192.168.1.196:5000/api/auth/validate', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      return response.ok;
     } catch (error) {
-      console.error('Error setting guest access:', error);
-      // Fallback navigation
-      navigation.navigate('HomeScreen');
+      console.error('Token validation error:', error);
+      return false;
     }
+  };
+
+const handleGuestAccess = async () => {
+  try {
+    await AsyncStorage.setItem('is_guest', 'true');
+    console.log('🎮 Continuing as guest');
+    
+    // Use navigation to go to HomeScreen
+    navigation.navigate('HomeScreen');
+  } catch (error) {
+    console.error('Error setting guest access:', error);
+    Alert.alert('Error', 'Failed to continue as guest');
+  }
+};
+  const handleSignIn = () => {
+    console.log('📱 Navigating to SignInScreen');
+    navigation.navigate('SignInScreen');
+  };
+
+  const handleSignUp = () => {
+    console.log('📱 Navigating to SignUpScreen');
+    navigation.navigate('SignUpScreen');
   };
 
   return (
     <LinearGradient
-      colors={['#0A7C72', '#0fbfae', '#F5E27A']}
+      colors={['#0A7C72', '#0fbfae']}
       style={styles.container}
     >
       <SafeAreaView style={styles.safeArea}>
         <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
+          
           {/* Header */}
           <View style={styles.header}>
-            <View style={styles.logoContainer}>
-              <Ionicons name="sparkles" size={isSmallDevice ? 28 : 32} color="#FFFFFF" />
-              <Text style={[styles.logo, isSmallDevice && styles.logoSmall]}>EduPlay</Text>
+            <View style={styles.logo}>
+              <Ionicons name="school" size={40} color="#FFFFFF" />
             </View>
-            <Text style={[styles.slogan, isSmallDevice && styles.sloganSmall]}>
-              Learn. Play. Grow.
-            </Text>
+            <Text style={styles.appName}>EduLearn</Text>
           </View>
 
           {/* Main Content */}
           <View style={styles.mainContent}>
-            <View style={[styles.featureCard, isSmallDevice && styles.featureCardSmall]}>
-              <Ionicons 
-                name="game-controller" 
-                size={isSmallDevice ? 40 : 48} 
-                color="#0A7C72" 
-              />
-              <Text style={[styles.featureTitle, isSmallDevice && styles.featureTitleSmall]}>
-                Interactive Games
-              </Text>
-              <Text style={[styles.featureDescription, isSmallDevice && styles.featureDescriptionSmall]}>
-                Engaging educational games powered by AI that make learning fun and personalized
-              </Text>
-            </View>
+            <Text style={[styles.welcomeTitle, isSmallDevice && styles.welcomeTitleSmall]}>
+              Welcome to EduLearn
+            </Text>
+            <Text style={[styles.welcomeSubtitle, isSmallDevice && styles.welcomeSubtitleSmall]}>
+              Discover your potential through personalized learning experiences
+            </Text>
 
-            <View style={[styles.featureCard, isSmallDevice && styles.featureCardSmall]}>
-              <Ionicons 
-                name="school" 
-                size={isSmallDevice ? 40 : 48} 
-                color="#0A7C72" 
-              />
-              <Text style={[styles.featureTitle, isSmallDevice && styles.featureTitleSmall]}>
-                CAPS Aligned
-              </Text>
-              <Text style={[styles.featureDescription, isSmallDevice && styles.featureDescriptionSmall]}>
-                Curriculum-aligned content for Grades 10-12 in Mathematics, English, Sciences and more
-              </Text>
-            </View>
-
-            <View style={[styles.featureCard, isSmallDevice && styles.featureCardSmall]}>
-              <Ionicons 
-                name="trophy" 
-                size={isSmallDevice ? 40 : 48} 
-                color="#0A7C72" 
-              />
-              <Text style={[styles.featureTitle, isSmallDevice && styles.featureTitleSmall]}>
-                Earn Rewards
-              </Text>
-              <Text style={[styles.featureDescription, isSmallDevice && styles.featureDescriptionSmall]}>
-                Collect badges, achievements, and track your progress as you learn
-              </Text>
+            {/* Feature Icons */}
+            <View style={styles.features}>
+              <View style={styles.featureItem}>
+                <Ionicons name="book" size={24} color="#FFFFFF" />
+                <Text style={styles.featureText}>Courses</Text>
+              </View>
+              <View style={styles.featureItem}>
+                <Ionicons name="bar-chart" size={24} color="#FFFFFF" />
+                <Text style={styles.featureText}>Progress</Text>
+              </View>
+              <View style={styles.featureItem}>
+                <Ionicons name="trophy" size={24} color="#FFFFFF" />
+                <Text style={styles.featureText}>Achievements</Text>
+              </View>
             </View>
           </View>
 
@@ -118,34 +130,24 @@ export default function WelcomeScreen() {
           <View style={styles.actionContainer}>
             <TouchableOpacity
               style={[styles.primaryButton, isSmallDevice && styles.buttonSmall]}
-              onPress={() => navigation.navigate('SignInScreen')}
+              onPress={handleSignIn}
               activeOpacity={0.8}
             >
-              <LinearGradient
-                colors={['#0A7C72', '#0fbfae']}
-                style={styles.buttonGradient}
-              >
-                <Text style={[styles.primaryButtonText, isSmallDevice && styles.buttonTextSmall]}>
-                  Sign In
-                </Text>
-                <Ionicons name="log-in" size={isSmallDevice ? 18 : 20} color="#FFFFFF" />
-              </LinearGradient>
+              <Text style={[styles.primaryButtonText, isSmallDevice && styles.buttonTextSmall]}>
+                Sign In
+              </Text>
+              <Ionicons name="log-in" size={isSmallDevice ? 18 : 20} color="#0A7C72" />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.secondaryButton, isSmallDevice && styles.buttonSmall]}
-              onPress={() => navigation.navigate('SignUpScreen')}
+              onPress={handleSignUp}
               activeOpacity={0.8}
             >
-              <LinearGradient
-                colors={['#FFFFFF', '#F8F9FA']}
-                style={styles.secondaryButtonGradient}
-              >
-                <Text style={[styles.secondaryButtonText, isSmallDevice && styles.buttonTextSmall]}>
-                  Create Account
-                </Text>
-                <Ionicons name="person-add" size={isSmallDevice ? 18 : 20} color="#0A7C72" />
-              </LinearGradient>
+              <Text style={[styles.secondaryButtonText, isSmallDevice && styles.buttonTextSmall]}>
+                Create Account
+              </Text>
+              <Ionicons name="person-add" size={isSmallDevice ? 18 : 20} color="#FFFFFF" />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -156,15 +158,8 @@ export default function WelcomeScreen() {
               <Text style={[styles.tertiaryButtonText, isSmallDevice && styles.tertiaryTextSmall]}>
                 Continue as Guest
               </Text>
-              <Ionicons name="play-circle" size={isSmallDevice ? 18 : 20} color="#0A7C72" />
+              <Ionicons name="arrow-forward" size={isSmallDevice ? 16 : 18} color="#FFFFFF" />
             </TouchableOpacity>
-
-            {/* Additional Info */}
-            <View style={styles.infoContainer}>
-              <Text style={styles.infoText}>
-                Guest access provides limited features. Sign up for full access to all games, progress tracking, and personalized learning.
-              </Text>
-            </View>
           </View>
         </Animated.View>
       </SafeAreaView>
@@ -173,209 +168,142 @@ export default function WelcomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  container: { 
+    flex: 1 
   },
-  safeArea: {
-    flex: 1,
+  safeArea: { 
+    flex: 1 
   },
-  content: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingVertical: 20,
+  content: { 
+    flex: 1, 
+    paddingHorizontal: 32, 
+    justifyContent: 'space-between',
+    paddingVertical: 40 
   },
   header: {
     alignItems: 'center',
     marginTop: height * 0.08,
-    marginBottom: 20,
-  },
-  logoContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
   },
   logo: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginLeft: 8,
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
-  },
-  logoSmall: {
-    fontSize: 28,
-  },
-  slogan: {
-    fontSize: 18,
-    color: '#FFFFFF',
-    opacity: 0.9,
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  sloganSmall: {
-    fontSize: 16,
-  },
-  mainContent: {
-    flex: 1,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 10,
-    marginBottom: 40,
+    marginBottom: 16,
   },
-  featureCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 24,
-    borderRadius: 20,
+  appName: {
+    fontSize: 24,
+    fontWeight: '300',
+    color: '#FFFFFF',
+    letterSpacing: 1,
+  },
+  mainContent: { 
+    flex: 1, 
+    justifyContent: 'center', 
     alignItems: 'center',
-    marginVertical: 8,
+  },
+  welcomeTitle: { 
+    fontSize: 28, 
+    fontWeight: '300', 
+    color: '#FFFFFF', 
+    textAlign: 'center',
+    marginBottom: 16,
+    letterSpacing: 0.5,
+  },
+  welcomeTitleSmall: { 
+    fontSize: 24 
+  },
+  welcomeSubtitle: { 
+    fontSize: 16, 
+    color: '#FFFFFF', 
+    textAlign: 'center',
+    opacity: 0.9,
+    lineHeight: 22,
+    paddingHorizontal: 20,
+    marginBottom: 40,
+    fontWeight: '300',
+  },
+  welcomeSubtitleSmall: { 
+    fontSize: 14,
+    lineHeight: 20 
+  },
+  features: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
     width: '100%',
-    maxWidth: 400,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
+    marginTop: 30,
+  },
+  featureItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  featureText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    marginTop: 8,
+    fontWeight: '300',
+  },
+  actionContainer: { 
+    width: '100%',
+    marginBottom: 30 
+  },
+  primaryButton: { 
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12, 
+    marginBottom: 12, 
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+  },
+  buttonSmall: { 
+    marginBottom: 10, 
+    paddingVertical: 14,
+  },
+  primaryButtonText: { 
+    color: '#0A7C72', 
+    fontSize: 16, 
+    fontWeight: '600', 
+    marginRight: 8 
+  },
+  secondaryButton: { 
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 12, 
+    marginBottom: 12, 
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.3)',
   },
-  featureCardSmall: {
-    padding: 20,
-    marginVertical: 6,
-    borderRadius: 16,
+  secondaryButtonText: { 
+    color: '#FFFFFF', 
+    fontSize: 16, 
+    fontWeight: '600', 
+    marginRight: 8 
   },
-  featureTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#0A7C72',
-    marginTop: 12,
-    marginBottom: 8,
-    textAlign: 'center',
+  buttonTextSmall: { 
+    fontSize: 15 
   },
-  featureTitleSmall: {
-    fontSize: 18,
-    marginTop: 10,
-    marginBottom: 6,
+  tertiaryButton: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    paddingVertical: 16 
   },
-  featureDescription: {
-    fontSize: 14,
-    color: '#666666',
-    textAlign: 'center',
-    lineHeight: 20,
-    paddingHorizontal: 10,
-  },
-  featureDescriptionSmall: {
-    fontSize: 13,
-    lineHeight: 18,
-    paddingHorizontal: 5,
-  },
-  actionContainer: {
-    width: '100%',
-    paddingBottom: 20,
-  },
-  primaryButton: {
-    borderRadius: 15,
-    overflow: 'hidden',
-    marginBottom: 12,
-    shadowColor: '#0A7C72',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  buttonSmall: {
-    marginBottom: 10,
-    borderRadius: 12,
-  },
-  buttonGradient: {
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  primaryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
+  tertiaryButtonText: { 
+    color: '#FFFFFF', 
+    fontSize: 14, 
+    fontWeight: '400', 
     marginRight: 8,
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    opacity: 0.9,
   },
-  secondaryButton: {
-    borderRadius: 15,
-    overflow: 'hidden',
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    borderWidth: 1,
-    borderColor: 'rgba(10, 124, 114, 0.1)',
-  },
-  secondaryButtonGradient: {
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  secondaryButtonText: {
-    color: '#0A7C72',
-    fontSize: 18,
-    fontWeight: '600',
-    marginRight: 8,
-  },
-  buttonTextSmall: {
-    fontSize: 16,
-  },
-  tertiaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    marginBottom: 16,
-  },
-  tertiaryButtonText: {
-    color: '#0A7C72',
-    fontSize: 16,
-    fontWeight: '500',
-    marginRight: 8,
-    textShadowColor: 'rgba(255, 255, 255, 0.5)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  tertiaryTextSmall: {
-    fontSize: 15,
-  },
-  infoContainer: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    padding: 16,
-    borderRadius: 12,
-    borderLeftWidth: 3,
-    borderLeftColor: '#FFD700',
-  },
-  infoText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    textAlign: 'center',
-    lineHeight: 16,
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
+  tertiaryTextSmall: { 
+    fontSize: 13 
+  }
 });

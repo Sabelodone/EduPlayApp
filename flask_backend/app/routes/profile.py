@@ -1,10 +1,30 @@
-from flask import Blueprint, request, jsonify, current_app
+# flask_backend/app/routes/profile.py - UPDATED VERSION
+from flask import Blueprint, request, jsonify, current_app, send_from_directory
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import User, UserProfile, UserChallengeProgress, ChallengeAttempt, AIInteraction, LessonProgress, GameSession
 from app import db
 from datetime import datetime, timedelta
+import os
+import uuid
+from werkzeug.utils import secure_filename
 
 profile_bp = Blueprint('profile', __name__)
+
+# Allowed file extensions for profile pictures
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def safe_db_operation(operation, default_value=None):
+    """Safely execute database operation with error handling"""
+    try:
+        return operation()
+    except Exception as e:
+        current_app.logger.error(f"Database operation error: {str(e)}")
+        return default_value
 
 @profile_bp.route('/profile', methods=['GET'])
 @jwt_required()
@@ -28,15 +48,39 @@ def get_profile():
             db.session.add(user.profile)
             db.session.commit()
         
-        # Calculate progress stats from existing models
-        total_points = 0
-        lessons_completed = LessonProgress.query.filter_by(user_id=user.id, completed=True).count()
-        games_completed = GameSession.query.filter_by(user_id=user.id, completed=True).count()
-        challenges_completed = UserChallengeProgress.query.filter_by(user_id=user.id, completed=True).count()
+        # Safely calculate progress stats from existing models
+        def calculate_progress():
+            lessons_completed = LessonProgress.query.filter_by(user_id=user.id, completed=True).count()
+            games_completed = GameSession.query.filter_by(user_id=user.id, completed=True).count()
+            challenges_completed = UserChallengeProgress.query.filter_by(user_id=user.id, completed=True).count()
+            
+            # Calculate experience based on completed activities
+            experience = (lessons_completed * 100) + (games_completed * 50) + (challenges_completed * 150)
+            level = (experience // 1000) + 1  # Simple level calculation
+            
+            return {
+                'total_points': experience,
+                'current_streak': 0,
+                'longest_streak': 0,
+                'lessons_completed': lessons_completed,
+                'games_completed': games_completed,
+                'challenges_completed': challenges_completed,
+                'quizzes_completed': 0,
+                'level': level,
+                'experience': experience
+            }
         
-        # Calculate experience based on completed activities
-        experience = (lessons_completed * 100) + (games_completed * 50) + (challenges_completed * 150)
-        level = (experience // 1000) + 1  # Simple level calculation
+        progress_data = safe_db_operation(calculate_progress, {
+            'total_points': 0,
+            'current_streak': 0,
+            'longest_streak': 0,
+            'lessons_completed': 0,
+            'games_completed': 0,
+            'challenges_completed': 0,
+            'quizzes_completed': 0,
+            'level': 1,
+            'experience': 0
+        })
         
         # Safely handle subjects
         profile = user.profile
@@ -53,6 +97,7 @@ def get_profile():
                 'email': user.email,
                 'first_name': user.first_name,
                 'last_name': user.last_name,
+                'profile_picture': user.profile_picture,  # Add profile picture field
                 'created_at': user.created_at.isoformat() if user.created_at else None
             },
             'profile': {
@@ -64,17 +109,7 @@ def get_profile():
                 'guardian_email': profile.guardian_email or '',
                 'guardian_phone': profile.guardian_phone or ''
             },
-            'progress': {
-                'total_points': total_points,
-                'current_streak': 0,  # You can implement streak logic later
-                'longest_streak': 0,
-                'lessons_completed': lessons_completed,
-                'games_completed': games_completed,
-                'challenges_completed': challenges_completed,
-                'quizzes_completed': 0,  # You can add quiz logic if needed
-                'level': level,
-                'experience': experience
-            }
+            'progress': progress_data
         }
         
         return jsonify(profile_data), 200
@@ -82,6 +117,78 @@ def get_profile():
     except Exception as e:
         current_app.logger.error(f"Error fetching profile: {str(e)}")
         return jsonify({'error': 'Failed to fetch profile'}), 500
+
+@profile_bp.route('/upload-picture', methods=['POST'])
+@jwt_required()
+def upload_profile_picture():
+    """Upload and update user profile picture"""
+    try:
+        current_user_id = get_jwt_identity()
+        user = User.query.get(current_user_id)
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Check if the post request has the file part
+        if 'profile_picture' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['profile_picture']
+        
+        # If user does not select file, browser also submits an empty part without filename
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        if file and allowed_file(file.filename):
+            # Check file size
+            file.seek(0, os.SEEK_END)
+            file_length = file.tell()
+            file.seek(0, os.SEEK_SET)
+            
+            if file_length > MAX_FILE_SIZE:
+                return jsonify({'error': 'File size too large. Maximum 5MB allowed.'}), 400
+            
+            # Generate unique filename
+            filename = secure_filename(file.filename)
+            file_extension = filename.rsplit('.', 1)[1].lower()
+            unique_filename = f"{user.id}_{uuid.uuid4().hex[:8]}.{file_extension}"
+            
+            # Create uploads directory if it doesn't exist
+            upload_folder = os.path.join(current_app.root_path, 'uploads', 'profile_pictures')
+            os.makedirs(upload_folder, exist_ok=True)
+            
+            # Save file
+            file_path = os.path.join(upload_folder, unique_filename)
+            file.save(file_path)
+            
+            # Update user profile picture
+            user.profile_picture = unique_filename
+            db.session.commit()
+            
+            # Return the filename (in production, you might return a full URL)
+            return jsonify({
+                'success': True,
+                'message': 'Profile picture uploaded successfully',
+                'profile_picture': unique_filename,
+                'profile_picture_url': f"/uploads/profile_pictures/{unique_filename}"  # Relative URL
+            }), 200
+        else:
+            return jsonify({'error': 'Invalid file type. Allowed types: PNG, JPG, JPEG, GIF'}), 400
+            
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error uploading profile picture: {str(e)}")
+        return jsonify({'error': 'Failed to upload profile picture'}), 500
+
+@profile_bp.route('/picture/<filename>', methods=['GET'])
+def get_profile_picture(filename):
+    """Serve profile picture"""
+    try:
+        upload_folder = os.path.join(current_app.root_path, 'uploads', 'profile_pictures')
+        return send_from_directory(upload_folder, filename)
+    except Exception as e:
+        current_app.logger.error(f"Error serving profile picture: {str(e)}")
+        return jsonify({'error': 'Profile picture not found'}), 404
 
 @profile_bp.route('/achievements', methods=['GET'])
 @jwt_required()
@@ -128,21 +235,30 @@ def get_study_stats():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
-        # Calculate stats from various models
-        lessons_completed = LessonProgress.query.filter_by(user_id=user.id, completed=True).count()
-        games_played = GameSession.query.filter_by(user_id=user.id).count()
-        challenges_completed = UserChallengeProgress.query.filter_by(user_id=user.id, completed=True).count()
+        # Safely calculate stats from various models
+        def calculate_stats():
+            lessons_completed = LessonProgress.query.filter_by(user_id=user.id, completed=True).count()
+            games_played = GameSession.query.filter_by(user_id=user.id).count()
+            challenges_completed = UserChallengeProgress.query.filter_by(user_id=user.id, completed=True).count()
+            
+            # Estimate study time
+            total_study_time = (lessons_completed * 30) + (games_played * 15) + (challenges_completed * 45)
+            
+            return {
+                'total_study_time': total_study_time,
+                'completed_lessons': lessons_completed,
+                'games_played': games_played,
+                'challenges_completed': challenges_completed,
+                'quizzes_completed': 0
+            }
         
-        # Estimate study time (you can make this more accurate later)
-        total_study_time = (lessons_completed * 30) + (games_played * 15) + (challenges_completed * 45)
-        
-        stats = {
-            'total_study_time': total_study_time,  # in minutes
-            'completed_lessons': lessons_completed,
-            'games_played': games_played,
-            'challenges_completed': challenges_completed,
-            'quizzes_completed': 0  # Add if you have quiz system
-        }
+        stats = safe_db_operation(calculate_stats, {
+            'total_study_time': 0,
+            'completed_lessons': 0,
+            'games_played': 0,
+            'challenges_completed': 0,
+            'quizzes_completed': 0
+        })
         
         return jsonify({
             'success': True,
@@ -161,65 +277,73 @@ def get_profile_recent_activity():
         current_user_id = get_jwt_identity()
         limit = request.args.get('limit', 5, type=int)
         
-        # Get recent challenge attempts
-        recent_attempts = ChallengeAttempt.query.filter_by(
-            user_id=current_user_id
-        ).order_by(
-            ChallengeAttempt.submitted_at.desc()
-        ).limit(limit).all()
-        
-        # Get recent AI interactions
-        recent_ai_interactions = AIInteraction.query.filter_by(
-            user_id=current_user_id
-        ).order_by(
-            AIInteraction.created_at.desc()
-        ).limit(limit).all()
-        
-        # Get recent lesson progress
-        recent_lessons = LessonProgress.query.filter_by(
-            user_id=current_user_id
-        ).order_by(
-            LessonProgress.last_accessed.desc()
-        ).limit(limit).all()
-        
         activities = []
         
-        for attempt in recent_attempts:
-            activities.append({
-                'id': f'challenge_{attempt.id}',
-                'type': 'challenge',
-                'title': 'Challenge Attempt',
-                'description': f'{"Completed" if attempt.is_correct else "Attempted"} coding challenge',
-                'time': attempt.submitted_at.isoformat() if attempt.submitted_at else None,
-                'timestamp': attempt.submitted_at,
-                'icon': 'code',
-                'completed': attempt.is_correct
-            })
-        
-        for interaction in recent_ai_interactions:
-            activities.append({
-                'id': f'ai_{interaction.id}',
-                'type': 'ai_interaction',
-                'title': 'AI Assistance',
-                'description': f'Used AI for {interaction.action}',
-                'time': interaction.created_at.isoformat() if interaction.created_at else None,
-                'timestamp': interaction.created_at,
-                'icon': 'robot',
-                'completed': True
-            })
-        
-        for lesson in recent_lessons:
-            if lesson.last_accessed:
-                activities.append({
-                    'id': f'lesson_{lesson.id}',
-                    'type': 'lesson',
-                    'title': 'Lesson Progress',
-                    'description': f'Progress: {lesson.progress * 100:.0f}% on lesson',
-                    'time': lesson.last_accessed.isoformat(),
-                    'timestamp': lesson.last_accessed,
-                    'icon': 'book',
-                    'completed': lesson.completed
+        # Safely get recent data
+        def fetch_recent_activity():
+            # Get recent challenge attempts
+            recent_attempts = ChallengeAttempt.query.filter_by(
+                user_id=current_user_id
+            ).order_by(
+                ChallengeAttempt.submitted_at.desc()
+            ).limit(limit).all()
+            
+            # Get recent AI interactions
+            recent_ai_interactions = AIInteraction.query.filter_by(
+                user_id=current_user_id
+            ).order_by(
+                AIInteraction.created_at.desc()
+            ).limit(limit).all()
+            
+            # Get recent lesson progress
+            recent_lessons = LessonProgress.query.filter_by(
+                user_id=current_user_id
+            ).order_by(
+                LessonProgress.last_accessed.desc()
+            ).limit(limit).all()
+            
+            temp_activities = []
+            
+            for attempt in recent_attempts:
+                temp_activities.append({
+                    'id': f'challenge_{attempt.id}',
+                    'type': 'challenge',
+                    'title': 'Challenge Attempt',
+                    'description': f'{"Completed" if attempt.is_correct else "Attempted"} coding challenge',
+                    'time': attempt.submitted_at.isoformat() if attempt.submitted_at else None,
+                    'timestamp': attempt.submitted_at,
+                    'icon': 'code',
+                    'completed': attempt.is_correct
                 })
+            
+            for interaction in recent_ai_interactions:
+                temp_activities.append({
+                    'id': f'ai_{interaction.id}',
+                    'type': 'ai_interaction',
+                    'title': 'AI Assistance',
+                    'description': f'Used AI for {interaction.action}',
+                    'time': interaction.created_at.isoformat() if interaction.created_at else None,
+                    'timestamp': interaction.created_at,
+                    'icon': 'robot',
+                    'completed': True
+                })
+            
+            for lesson in recent_lessons:
+                if lesson.last_accessed:
+                    temp_activities.append({
+                        'id': f'lesson_{lesson.id}',
+                        'type': 'lesson',
+                        'title': 'Lesson Progress',
+                        'description': f'Progress: {lesson.progress * 100:.0f}% on lesson',
+                        'time': lesson.last_accessed.isoformat(),
+                        'timestamp': lesson.last_accessed,
+                        'icon': 'book',
+                        'completed': lesson.completed
+                    })
+            
+            return temp_activities
+        
+        activities = safe_db_operation(fetch_recent_activity, [])
         
         # Sort by timestamp and limit
         activities.sort(key=lambda x: x['timestamp'] if x['timestamp'] else datetime.min, reverse=True)
@@ -259,6 +383,8 @@ def update_profile():
             user.first_name = data['first_name']
         if 'last_name' in data:
             user.last_name = data['last_name']
+        if 'email' in data:
+            user.email = data['email']
         
         # Ensure profile exists
         if not user.profile:
@@ -291,7 +417,7 @@ def update_profile():
         return jsonify({
             'success': True,
             'message': 'Profile updated successfully',
-            'profile': profile.to_dict()
+            'user': user.to_dict()
         }), 200
         
     except Exception as e:

@@ -1,167 +1,252 @@
-// services/gameGeneratorService.js - PURE OPENAI VERSION
-import { GAME_CATEGORIES, SUBJECT_COLORS, SUBJECT_ICONS } from '../components/gameData';
+// hooks/useGameEngine.js - UPDATED WITH BACKEND INTEGRATION
+import { useState, useEffect, useCallback } from 'react';
+import { Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import API_BASE_URL from '../config';
 
-// Use environment variable for API key
-const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
-const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+export const useGameEngine = () => {
+  const [currentGame, setCurrentGame] = useState(null);
+  const [score, setScore] = useState(0);
+  const [gameState, setGameState] = useState('idle'); // idle, playing, completed, paused
+  const [timeRemaining, setTimeRemaining] = useState(0);
+  const [questions, setQuestions] = useState([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-// Strict API validation
-console.log('🔑 OpenAI API Key Status:', {
-  exists: !!OPENAI_API_KEY,
-  validFormat: OPENAI_API_KEY?.startsWith('sk-'),
-  length: OPENAI_API_KEY?.length,
-  preview: OPENAI_API_KEY ? OPENAI_API_KEY.substring(0, 10) + '...' : 'MISSING'
-});
-
-if (!OPENAI_API_KEY) {
-  console.error('❌ CRITICAL: EXPO_PUBLIC_OPENAI_API_KEY is missing from .env file');
-  throw new Error('OpenAI API key is required. Please add EXPO_PUBLIC_OPENAI_API_KEY to your .env file');
-}
-
-if (!OPENAI_API_KEY.startsWith('sk-')) {
-  console.error('❌ CRITICAL: Invalid OpenAI API key format. Key must start with "sk-"');
-  throw new Error('Invalid OpenAI API key format. Please check your .env file');
-}
-
-class GameGeneratorService {
-  // Generate a single game
-  async generateGame(params = {}) {
+  // Track game start to backend
+  const trackGameStart = async (gameData) => {
     try {
-      const { subject, difficulty = 'Medium', grade = '10' } = params;
-      
-      console.log('🎮 Generating game for:', { subject, difficulty, grade });
+      const token = await AsyncStorage.getItem('access_token');
+      if (!token) return;
 
-      const prompt = `
-Create an educational game for ${subject} Grade ${grade} with ${difficulty} difficulty aligned to South African CAPS curriculum.
-
-Generate a JSON response with:
-- title (engaging, 2-3 words)
-- description (1 sentence explaining the game)
-- difficulty ("${difficulty}")
-- duration (e.g., "10-15 min") 
-- players (e.g., "1-4")
-- rating (4.0 to 5.0)
-- topics (2-3 CAPS topics)
-- grade ("${grade}")
-
-Make it fun and educational! Respond with valid JSON only.`;
-
-      console.log('🔄 Calling OpenAI API...');
-
-      const response = await fetch(OPENAI_URL, {
+      const response = await fetch(`${API_BASE_URL}/progress/game-started`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENAI_API_KEY}`
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an educational game designer for South African CAPS curriculum. Respond with valid JSON only. No additional text.'
-            },
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
-          temperature: 0.8,
-          max_tokens: 500
-        })
+          game_title: gameData.title,
+          game_id: gameData.id,
+          category: gameData.category,
+          difficulty: gameData.difficulty,
+          subject: gameData.category // Use category as subject
+        }),
       });
 
-      console.log('📡 API Response status:', response.status);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ OpenAI API error:', response.status, errorText);
-        throw new Error(`OpenAI API error ${response.status}: ${errorText}`);
+      if (response.ok) {
+        console.log('✅ Game start tracked to backend');
       }
+    } catch (error) {
+      console.log('⚠️ Failed to track game start:', error.message);
+    }
+  };
 
-      const data = await response.json();
-      console.log('✅ OpenAI response received');
+  // Track game completion to backend
+  const trackGameCompletion = async (gameData, finalScore, duration) => {
+    try {
+      const token = await AsyncStorage.getItem('access_token');
+      if (!token) return;
+
+      const response = await fetch(`${API_BASE_URL}/progress/game-completed`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          game_id: gameData.id,
+          game_type: gameData.gameType || 'quiz',
+          score: finalScore,
+          duration: duration,
+          correct_answers: finalScore / 10, // Assuming 10 points per correct answer
+          total_questions: questions.length
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('✅ Game completion tracked:', result);
+        return result;
+      }
+    } catch (error) {
+      console.log('⚠️ Failed to track game completion:', error.message);
+    }
+  };
+
+  const startGame = useCallback(async (game) => {
+    try {
+      setLoading(true);
+      setError(null);
       
-      // Parse the response
-      const gameData = JSON.parse(data.choices[0].message.content);
-      console.log('🎯 Generated game:', gameData.title);
+      console.log('🎮 Starting game:', game.title);
       
-      return this.formatGameData(gameData, subject);
+      // Set current game
+      setCurrentGame(game);
+      setGameState('playing');
+      setScore(0);
+      setCurrentQuestionIndex(0);
+      
+      // Set timer based on game duration
+      const duration = game.duration || '15-20 min';
+      const timeMatch = duration.match(/(\d+)/);
+      const gameTime = timeMatch ? parseInt(timeMatch[1]) * 60 : 900; // Default 15 minutes
+      setTimeRemaining(gameTime);
+      
+      // Generate or fetch questions
+      const gameQuestions = await generateQuestionsForGame(game);
+      setQuestions(gameQuestions);
+      
+      // Track game start to backend
+      await trackGameStart(game);
+      
+      console.log(`✅ Game started with ${gameQuestions.length} questions`);
+      
+    } catch (err) {
+      console.error('❌ Failed to start game:', err);
+      setError(err.message);
+      Alert.alert('Game Error', 'Failed to start game. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const generateQuestionsForGame = async (game) => {
+    // Simulate question generation - in real app, this would call your question service
+    const questionCount = game.difficulty === 'Easy' ? 5 : 
+                         game.difficulty === 'Medium' ? 8 : 12;
+    
+    return Array.from({ length: questionCount }, (_, index) => ({
+      id: `q-${game.id}-${index}`,
+      question: `Sample question about ${game.topics?.[0] || game.category} (${index + 1})`,
+      options: ['Option A', 'Option B', 'Option C', 'Option D'],
+      correctAnswer: Math.floor(Math.random() * 4),
+      explanation: 'This is a sample explanation for the correct answer.',
+      points: 10
+    }));
+  };
+
+  const submitAnswer = useCallback(async (selectedAnswer) => {
+    if (gameState !== 'playing') return;
+    
+    const currentQuestion = questions[currentQuestionIndex];
+    const isCorrect = selectedAnswer === currentQuestion.correctAnswer;
+    
+    if (isCorrect) {
+      const newScore = score + currentQuestion.points;
+      setScore(newScore);
+    }
+    
+    // Move to next question or end game
+    if (currentQuestionIndex < questions.length - 1) {
+      setCurrentQuestionIndex(prev => prev + 1);
+    } else {
+      await endGame();
+    }
+    
+    return isCorrect;
+  }, [currentQuestionIndex, questions, score, gameState]);
+
+  const endGame = useCallback(async () => {
+    try {
+      setGameState('completed');
+      
+      // Calculate duration
+      const startTime = currentGame?.startTime || Date.now() - (timeRemaining * 1000);
+      const duration = Math.floor((Date.now() - startTime) / 1000); // in seconds
+      
+      // Track completion to backend
+      const result = await trackGameCompletion(currentGame, score, duration);
+      
+      console.log('🎯 Game completed:', { score, duration, result });
+      
+      return {
+        success: true,
+        score,
+        duration,
+        totalQuestions: questions.length,
+        correctAnswers: Math.floor(score / 10),
+        pointsEarned: result?.points_earned || score
+      };
       
     } catch (error) {
-      console.error('❌ Game generation failed:', error.message);
-      throw error; // Don't fallback to mock - throw the error
+      console.error('❌ Error ending game:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
-  }
+  }, [currentGame, score, timeRemaining, questions.length]);
 
-  // Generate multiple games for all subjects
-  async generateAllGames() {
-    const subjects = GAME_CATEGORIES.filter(cat => cat !== 'All');
-    const allGames = [];
+  const pauseGame = useCallback(() => {
+    if (gameState === 'playing') {
+      setGameState('paused');
+    }
+  }, [gameState]);
+
+  const resumeGame = useCallback(() => {
+    if (gameState === 'paused') {
+      setGameState('playing');
+    }
+  }, [gameState]);
+
+  const resetGame = useCallback(() => {
+    setCurrentGame(null);
+    setScore(0);
+    setGameState('idle');
+    setTimeRemaining(0);
+    setQuestions([]);
+    setCurrentQuestionIndex(0);
+    setError(null);
+  }, []);
+
+  // Timer effect
+  useEffect(() => {
+    let interval;
     
-    console.log('🚀 Starting AI game generation for subjects:', subjects);
-    
-    for (const subject of subjects) {
-      try {
-        // Generate 2 games per subject
-        for (let i = 0; i < 2; i++) {
-          const difficulties = ['Easy', 'Medium', 'Hard'];
-          const grades = ['10', '11', '12'];
-          
-          const difficulty = difficulties[Math.floor(Math.random() * difficulties.length)];
-          const grade = grades[Math.floor(Math.random() * grades.length)];
-          
-          console.log(`📚 Generating ${subject} game ${i + 1}...`);
-          const game = await this.generateGame({ subject, difficulty, grade });
-          allGames.push(game);
-          
-          // Avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      } catch (error) {
-        console.error(`❌ Failed to generate games for ${subject}:`, error.message);
-        // Continue with other subjects even if one fails
-      }
+    if (gameState === 'playing' && timeRemaining > 0) {
+      interval = setInterval(() => {
+        setTimeRemaining(prev => {
+          if (prev <= 1) {
+            endGame();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
     }
     
-    if (allGames.length === 0) {
-      throw new Error('Failed to generate any games. Check your OpenAI API key and internet connection.');
-    }
+    return () => clearInterval(interval);
+  }, [gameState, timeRemaining, endGame]);
+
+  const currentQuestion = questions[currentQuestionIndex] || null;
+
+  return {
+    // State
+    currentGame,
+    score,
+    gameState,
+    timeRemaining,
+    questions,
+    currentQuestion,
+    currentQuestionIndex,
+    loading,
+    error,
     
-    console.log(`✅ Successfully generated ${allGames.length} AI-powered games`);
-    return allGames;
-  }
-
-  // Format OpenAI response into game object
-  formatGameData(gameData, subject) {
-    const id = this.generateId(subject, gameData.title);
+    // Actions
+    startGame,
+    submitAnswer,
+    endGame,
+    pauseGame,
+    resumeGame,
+    resetGame,
     
-    return {
-      id,
-      title: gameData.title,
-      category: subject,
-      description: gameData.description,
-      difficulty: gameData.difficulty,
-      duration: gameData.duration,
-      players: gameData.players,
-      rating: parseFloat(gameData.rating) || 4.0,
-      color: SUBJECT_COLORS[subject] || '#667eea',
-      icon: SUBJECT_ICONS[subject] || '🎮',
-      locked: false, // No locked games for now
-      grade: gameData.grade,
-      topics: gameData.topics || [],
-      generated: true,
-      timestamp: new Date().toISOString()
-    };
-  }
+    // Derived state
+    progress: questions.length > 0 ? (currentQuestionIndex / questions.length) * 100 : 0,
+    totalQuestions: questions.length,
+    isGameActive: gameState === 'playing' || gameState === 'paused'
+  };
+};
 
-  // Generate unique ID
-  generateId(subject, title) {
-    const subjectSlug = subject.toLowerCase().replace(/\s+/g, '-');
-    const titleSlug = title.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-    return `${subjectSlug}-${titleSlug}-${Date.now()}`;
-  }
-}
-
-console.log('🎯 GameGeneratorService: Using PURE OpenAI API (no mock data)');
-export default new GameGeneratorService();
+export default useGameEngine;

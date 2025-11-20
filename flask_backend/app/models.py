@@ -8,6 +8,7 @@ db = SQLAlchemy()
 bcrypt = Bcrypt()
 
 class User(db.Model):
+    __tablename__ = 'user'
     __table_args__ = {'extend_existing': True}
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -15,6 +16,7 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     first_name = db.Column(db.String(50), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
+    profile_picture = db.Column(db.String(255))  # ADD THIS LINE for profile picture
     is_active = db.Column(db.Boolean, default=True)
     is_verified = db.Column(db.Boolean, default=False)
     is_guest = db.Column(db.Boolean, default=False)
@@ -22,8 +24,9 @@ class User(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    profile = db.relationship('UserProfile', backref='user', uselist=False, cascade='all, delete-orphan')
+    profile = db.relationship('UserProfile', backref='user', uselist=False, cascade='all, delete-orphan', lazy='select')
     password_resets = db.relationship('PasswordReset', backref='user', cascade='all, delete-orphan')
+    password_reset_tokens = db.relationship('PasswordResetToken', backref='user', cascade='all, delete-orphan')  # ADD THIS LINE
     achievements = db.relationship('UserAchievement', backref='user', cascade='all, delete-orphan')
     activities = db.relationship('UserActivity', backref='user', cascade='all, delete-orphan')
     game_sessions = db.relationship('GameSession', backref='user', cascade='all, delete-orphan')
@@ -33,34 +36,66 @@ class User(db.Model):
     ai_interactions = db.relationship('AIInteraction', backref='user', cascade='all, delete-orphan')
     quiz_attempts = db.relationship('QuizAttempt', backref='user', cascade='all, delete-orphan')
     study_notes = db.relationship('StudyNote', backref='user', cascade='all, delete-orphan')
+    video_progress = db.relationship('VideoProgress', backref='user', cascade='all, delete-orphan')
+    resource_downloads = db.relationship('ResourceDownload', backref='user', cascade='all, delete-orphan')
 
     def set_password(self, password):
         self.password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
     
     def check_password(self, password):
+        """Check if provided password matches the stored hash"""
         return bcrypt.check_password_hash(self.password_hash, password)
-    
+
     def to_dict(self):
+        profile_data = self.profile.to_dict() if self.profile else None
         return {
             'id': self.id,
             'email': self.email,
             'first_name': self.first_name,
             'last_name': self.last_name,
+            'profile_picture': self.profile_picture,  # ADD THIS LINE
             'is_active': self.is_active,
             'is_verified': self.is_verified,
             'is_guest': self.is_guest,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'profile': profile_data
+        }
+
+# Fixed PasswordResetToken model to match your database schema
+class PasswordResetToken(db.Model):
+    __tablename__ = 'password_reset_tokens'
+    __table_args__ = {'extend_existing': True}
+    
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)  # Changed to String(36)
+    token = db.Column(db.String(255), unique=True, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    is_used = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def is_expired(self):
+        return datetime.utcnow() > self.expires_at
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'token': self.token,
+            'expires_at': self.expires_at.isoformat(),
+            'is_used': self.is_used,
+            'created_at': self.created_at.isoformat()
         }
 
 class UserProfile(db.Model):
+    __tablename__ = 'user_profile'
     __table_args__ = {'extend_existing': True}
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False, unique=True)
     grade_level = db.Column(db.String(50))
     school = db.Column(db.String(100))
-    subjects = db.Column(db.Text)
+    subjects = db.Column(db.Text)  # This stores JSON data
     is_minor = db.Column(db.Boolean, default=True)
     guardian_name = db.Column(db.String(100))
     guardian_email = db.Column(db.String(120))
@@ -69,11 +104,22 @@ class UserProfile(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def set_subjects(self, subjects_list):
-        self.subjects = json.dumps(subjects_list)
+        """Store subjects as JSON string"""
+        if isinstance(subjects_list, list):
+            self.subjects = json.dumps(subjects_list)
+        else:
+            self.subjects = json.dumps([])
     
     def get_subjects(self):
+        """Retrieve subjects as list"""
         if self.subjects:
-            return json.loads(self.subjects)
+            try:
+                return json.loads(self.subjects)
+            except json.JSONDecodeError:
+                # Fallback for old comma-separated format
+                if ',' in self.subjects:
+                    return [subject.strip() for subject in self.subjects.split(',') if subject.strip()]
+                return [self.subjects] if self.subjects else []
         return []
     
     def to_dict(self):
@@ -82,7 +128,7 @@ class UserProfile(db.Model):
             'user_id': self.user_id,
             'grade_level': self.grade_level,
             'school': self.school,
-            'subjects': self.get_subjects(),
+            'subjects': self.get_subjects(),  # This will return a list
             'is_minor': self.is_minor,
             'guardian_name': self.guardian_name,
             'guardian_email': self.guardian_email,
@@ -92,6 +138,7 @@ class UserProfile(db.Model):
         }
 
 class PasswordReset(db.Model):
+    __tablename__ = 'password_reset'
     __table_args__ = {'extend_existing': True}
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -102,6 +149,7 @@ class PasswordReset(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class UserAchievement(db.Model):
+    __tablename__ = 'user_achievement'
     __table_args__ = {'extend_existing': True}
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -120,6 +168,7 @@ class UserAchievement(db.Model):
         }
 
 class UserActivity(db.Model):
+    __tablename__ = 'user_activity'
     __table_args__ = {'extend_existing': True}
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -145,10 +194,12 @@ class UserActivity(db.Model):
         }
 
 class GameSession(db.Model):
+    __tablename__ = 'game_session'
     __table_args__ = {'extend_existing': True}
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
+    game_id = db.Column(db.String(36), db.ForeignKey('games.id'), nullable=False)
     game_type = db.Column(db.String(100), nullable=False)
     score = db.Column(db.Integer, default=0)
     completed = db.Column(db.Boolean, default=False)
@@ -167,6 +218,7 @@ class GameSession(db.Model):
         return {
             'id': self.id,
             'user_id': self.user_id,
+            'game_id': self.game_id,
             'game_type': self.game_type,
             'score': self.score,
             'completed': self.completed,
@@ -176,15 +228,22 @@ class GameSession(db.Model):
         }
 
 class LessonProgress(db.Model):
+    __tablename__ = 'lesson_progress'
     __table_args__ = {'extend_existing': True}
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
-    lesson_id = db.Column(db.String(100), nullable=False)
+    lesson_id = db.Column(db.String(36), db.ForeignKey('lessons.id'), nullable=False)
     progress = db.Column(db.Float, default=0.0)
     completed = db.Column(db.Boolean, default=False)
     last_accessed = db.Column(db.DateTime, default=datetime.utcnow)
     data = db.Column(db.Text)
+    
+    # New fields for curriculum tracking
+    subject = db.Column(db.String(100))
+    grade = db.Column(db.String(10))
+    topic = db.Column(db.String(100))
+    video_id = db.Column(db.String(50))  # YouTube video ID
     
     def to_dict(self):
         progress_data = {}
@@ -201,11 +260,15 @@ class LessonProgress(db.Model):
             'progress': self.progress,
             'completed': self.completed,
             'last_accessed': self.last_accessed.isoformat() if self.last_accessed else None,
+            'subject': self.subject,
+            'grade': self.grade,
+            'topic': self.topic,
+            'video_id': self.video_id,
             'data': progress_data
         }
 
-# NOTE: Consider renaming this to avoid confusion with UserChallengeProgress
 class ChallengeParticipation(db.Model):
+    __tablename__ = 'challenge_participation'
     __table_args__ = {'extend_existing': True}
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -237,6 +300,7 @@ class ChallengeParticipation(db.Model):
         }
 
 class BlacklistedToken(db.Model):
+    __tablename__ = 'blacklisted_token'
     __table_args__ = {'extend_existing': True}
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -418,7 +482,16 @@ class Lesson(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relationships
+    # New fields for curriculum integration
+    subject = db.Column(db.String(100))
+    grade = db.Column(db.String(10))
+    topic = db.Column(db.String(100))
+    video_id = db.Column(db.String(50))  # YouTube video ID
+    duration = db.Column(db.String(20))  # Video duration like '15:30'
+    channel = db.Column(db.String(100))  # YouTube channel name
+    content_type = db.Column(db.String(20), default='video')  # video, text, interactive
+    
+    # Relationships - FIXED: Now properly linked with foreign keys
     quizzes = db.relationship('Quiz', backref='lesson', cascade='all, delete-orphan')
     progress_records = db.relationship('LessonProgress', backref='lesson', cascade='all, delete-orphan')
     study_notes = db.relationship('StudyNote', backref='lesson', cascade='all, delete-orphan')
@@ -433,6 +506,13 @@ class Lesson(db.Model):
             'category': self.category,
             'order_index': self.order_index,
             'is_active': self.is_active,
+            'subject': self.subject,
+            'grade': self.grade,
+            'topic': self.topic,
+            'video_id': self.video_id,
+            'duration': self.duration,
+            'channel': self.channel,
+            'content_type': self.content_type,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
@@ -510,11 +590,17 @@ class StudyNote(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
-    lesson_id = db.Column(db.String(100), nullable=False)
+    lesson_id = db.Column(db.String(36), db.ForeignKey('lessons.id'), nullable=True)
     title = db.Column(db.String(200), nullable=False)
     content = db.Column(db.Text, nullable=False)
     tags = db.Column(db.Text)
     is_public = db.Column(db.Boolean, default=False)
+    
+    # New fields for curriculum integration
+    subject = db.Column(db.String(100))
+    grade = db.Column(db.String(10))
+    topic = db.Column(db.String(100))
+    
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -535,6 +621,105 @@ class StudyNote(db.Model):
             'content': self.content,
             'tags': self.get_tags(),
             'is_public': self.is_public,
+            'subject': self.subject,
+            'grade': self.grade,
+            'topic': self.topic,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+
+class VideoProgress(db.Model):
+    __tablename__ = 'video_progress'
+    __table_args__ = {'extend_existing': True}
+    
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
+    video_id = db.Column(db.String(50), nullable=False)  # YouTube video ID
+    subject = db.Column(db.String(100), nullable=False)
+    grade = db.Column(db.String(10), nullable=False)
+    topic = db.Column(db.String(100), nullable=False)
+    completed = db.Column(db.Boolean, default=False)
+    progress = db.Column(db.Float, default=0.0)  # Watch progress 0.0 to 1.0
+    last_position = db.Column(db.Integer, default=0)  # Last watched position in seconds
+    watched_duration = db.Column(db.Integer, default=0)  # Total watched duration in seconds
+    last_accessed = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Unique constraint to prevent duplicate progress entries
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'video_id', name='unique_user_video_progress'),
+    )
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'video_id': self.video_id,
+            'subject': self.subject,
+            'grade': self.grade,
+            'topic': self.topic,
+            'completed': self.completed,
+            'progress': self.progress,
+            'last_position': self.last_position,
+            'watched_duration': self.watched_duration,
+            'last_accessed': self.last_accessed.isoformat() if self.last_accessed else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+
+class ExamPaper(db.Model):
+    __tablename__ = 'exam_papers'
+    __table_args__ = {'extend_existing': True}
+    
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    title = db.Column(db.String(200), nullable=False)
+    subject = db.Column(db.String(100), nullable=False)
+    grade = db.Column(db.String(10), nullable=False)
+    year = db.Column(db.String(10), nullable=False)
+    questions = db.Column(db.Integer, default=0)
+    duration = db.Column(db.String(50))  # e.g., '2 hours'
+    download_url = db.Column(db.Text)
+    file_path = db.Column(db.Text)  # Local file path if downloaded
+    file_size = db.Column(db.Integer)  # File size in bytes
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'subject': self.subject,
+            'grade': self.grade,
+            'year': self.year,
+            'questions': self.questions,
+            'duration': self.duration,
+            'download_url': self.download_url,
+            'file_path': self.file_path,
+            'file_size': self.file_size,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+
+class ResourceDownload(db.Model):
+    __tablename__ = 'resource_downloads'
+    __table_args__ = {'extend_existing': True}
+    
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('user.id'), nullable=False)
+    resource_type = db.Column(db.String(50), nullable=False)  # 'exam_paper', 'study_notes', 'video'
+    resource_id = db.Column(db.String(100), nullable=False)
+    downloaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+    file_path = db.Column(db.Text)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'resource_type': self.resource_type,
+            'resource_id': self.resource_id,
+            'downloaded_at': self.downloaded_at.isoformat() if self.downloaded_at else None,
+            'file_path': self.file_path
         }

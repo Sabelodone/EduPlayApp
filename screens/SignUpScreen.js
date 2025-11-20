@@ -1,3 +1,4 @@
+// Add this import at the very top
 import React, { useState } from 'react';
 import { 
   View, 
@@ -17,8 +18,32 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import API_BASE_URL from '../config';
+import { useAuth } from '../hooks/useAuth';
+
+// Add the missing validatePassword function here
+const validatePassword = (password) => {
+  if (password.length < 6) {
+    return 'Password must be at least 6 characters long';
+  }
+  
+  if (!/(?=.*[a-z])/.test(password)) {
+    return 'Password must contain at least one lowercase letter';
+  }
+  
+  if (!/(?=.*[A-Z])/.test(password)) {
+    return 'Password must contain at least one uppercase letter';
+  }
+  
+  if (!/(?=.*\d)/.test(password)) {
+    return 'Password must contain at least one number';
+  }
+  
+  if (!/(?=.*[!@#$%^&*(),.?":{}|<>])/.test(password)) {
+    return 'Password must contain at least one special character';
+  }
+  
+  return null; // No error
+};
 
 // Simplified data as requested
 const GRADES = ['Grade 10', 'Grade 11', 'Grade 12'];
@@ -32,6 +57,8 @@ const SUBJECTS = [
 
 export default function SignUpScreen() {
   const navigation = useNavigation();
+  const { signup, loading: authLoading } = useAuth();
+  
   const [currentStep, setCurrentStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [showGradeModal, setShowGradeModal] = useState(false);
@@ -75,25 +102,31 @@ export default function SignUpScreen() {
     }));
   };
 
-  const validateStep1 = () => {
-    if (!formData.fullName.trim()) {
-      Alert.alert('Error', 'Please enter your full name');
-      return false;
-    }
-    if (!formData.email || !/\S+@\S+\.\S+/.test(formData.email)) {
-      Alert.alert('Error', 'Please enter a valid email address');
-      return false;
-    }
-    if (formData.password.length < 6) {
-      Alert.alert('Error', 'Password should be at least 6 characters');
-      return false;
-    }
-    if (formData.password !== formData.confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
-      return false;
-    }
-    return true;
-  };
+const validateStep1 = () => {
+  if (!formData.fullName.trim()) {
+    Alert.alert('Error', 'Please enter your full name');
+    return false;
+  }
+  
+  if (!formData.email || !/\S+@\S+\.\S+/.test(formData.email)) {
+    Alert.alert('Error', 'Please enter a valid email address');
+    return false;
+  }
+  
+  // Enhanced password validation
+  const passwordError = validatePassword(formData.password);
+  if (passwordError) {
+    Alert.alert('Password Requirements', passwordError);
+    return false;
+  }
+  
+  if (formData.password !== formData.confirmPassword) {
+    Alert.alert('Error', 'Passwords do not match');
+    return false;
+  }
+  
+  return true;
+};
 
   const validateStep2 = () => {
     if (!formData.gradeLevel) {
@@ -134,66 +167,42 @@ export default function SignUpScreen() {
     setIsLoading(true);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/signup`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          fullName: formData.fullName.trim(),
-          email: formData.email.toLowerCase().trim(),
-          password: formData.password,
-          gradeLevel: formData.gradeLevel,
+      // Prepare user data for registration - matches your Flask backend structure
+      const userData = {
+        first_name: formData.fullName.split(' ')[0] || formData.fullName,
+        last_name: formData.fullName.split(' ').slice(1).join(' ') || '',
+        email: formData.email.toLowerCase().trim(),
+        password: formData.password,
+        profile: {
+          grade_level: formData.gradeLevel,
           school: formData.school || formData.customSchool,
-          preferredLanguage: formData.preferredLanguage,
           subjects: formData.subjects,
-          isMinor: formData.isMinor,
-          guardianName: formData.guardianName.trim(),
-          guardianEmail: formData.guardianEmail.toLowerCase().trim(),
-          guardianPhone: formData.guardianPhone.trim(),
-        }),
-      });
+          is_minor: formData.isMinor,
+          guardian_name: formData.guardianName.trim(),
+          guardian_email: formData.guardianEmail.toLowerCase().trim(),
+          guardian_phone: formData.guardianPhone.trim(),
+        }
+      };
 
-      const data = await response.json();
+      console.log('📤 Sending registration data:', userData);
 
-      if (response.ok) {
-        // Store tokens
-        await AsyncStorage.setItem('access_token', data.access_token);
-        await AsyncStorage.setItem('refresh_token', data.refresh_token);
+      const result = await signup(userData);
+      
+      if (result.success) {
+        console.log('✅ User registered successfully:', result.user);
         
-        console.log('User registered:', data.user.id);
-        
-        Alert.alert(
-          'Welcome!', 
-          'Your account has been created successfully!',
-          [{ 
-            text: 'Start Learning', 
-            onPress: () => navigation.navigate('HomeScreen') 
-          }]
-        );
+        // FIX: Add a small delay and remove the Alert to prevent navigation conflicts
+        setTimeout(() => {
+          navigation.navigate('HomeScreen');
+        }, 100);
         
       } else {
-        let errorMessage = 'Failed to create account. Please try again.';
-        
-        if (data.error) {
-          errorMessage = data.error;
-        } else if (data.message) {
-          errorMessage = data.message;
-        }
-        
-        Alert.alert('Sign Up Failed', errorMessage);
+        Alert.alert('Sign Up Failed', result.error || 'Failed to create account');
       }
       
     } catch (error) {
       console.error('Registration error:', error);
-      
-      let errorMessage = 'Network error. Please check your connection and try again.';
-      
-      if (error.message.includes('Network request failed')) {
-        errorMessage = 'Cannot connect to server. Please check if your backend is running.';
-      }
-      
-      Alert.alert('Sign Up Failed', errorMessage);
+      Alert.alert('Sign Up Failed', 'An unexpected error occurred');
     } finally {
       setIsLoading(false);
     }
@@ -909,6 +918,6 @@ const styles = StyleSheet.create({
   customSchoolText: {
     fontSize: 16,
     color: '#0A7C72',
-    fontWeight: '500',
+    fontWeight: '500',    
   },
 });

@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from '../hooks/useAuth';
 import API_BASE_URL from '../config';
 
 const { width, height } = Dimensions.get('window');
@@ -24,6 +24,8 @@ const isSmallDevice = height < 700;
 
 export default function SignInScreen() {
   const navigation = useNavigation();
+  const { signin, loading: authLoading } = useAuth();
+  
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -56,16 +58,6 @@ export default function SignInScreen() {
     ]).start();
   }, [fadeAnim, slideUpAnim, scaleAnim]);
 
-  // Store tokens in AsyncStorage
-  const storeTokens = async (accessToken, refreshToken) => {
-    try {
-      await AsyncStorage.setItem('access_token', accessToken);
-      await AsyncStorage.setItem('refresh_token', refreshToken);
-    } catch (error) {
-      console.error('Error storing tokens:', error);
-    }
-  };
-
   const validateForm = () => {
     const newErrors = {};
     
@@ -85,56 +77,41 @@ export default function SignInScreen() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSignIn = async () => {
-    if (!validateForm()) {
-      return;
-    }
+const handleSignIn = async () => {
+  if (!validateForm()) {
+    return;
+  }
 
-    setIsLoading(true);
+  setIsLoading(true);
+  console.log('🔐 Attempting signin for:', email);
+  
+  try {
+    const result = await signin(email.toLowerCase().trim(), password);
     
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/signin`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: email.toLowerCase().trim(),
-          password: password
-        }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        await storeTokens(data.access_token, data.refresh_token);
-        console.log('User signed in:', data.user?.id);
-        setIsLoading(false);
-        navigation.navigate('HomeScreen');
-      } else {
-        setIsLoading(false);
-        let errorMessage = 'Failed to sign in. Please try again.';
-        
-        if (data.error) {
-          errorMessage = data.error;
-        }
-        
-        Alert.alert('Sign In Failed', errorMessage);
-      }
+    if (result.success) {
+      console.log('✅ User signed in successfully:', result.user);
+      // Navigation will be handled automatically by auth state
+    } else {
+      console.log('❌ Signin failed:', result.error);
       
-    } catch (error) {
-      setIsLoading(false);
-      console.error('Sign in error:', error);
-      
-      let errorMessage = 'Network error. Please check your connection and try again.';
-      
-      if (error.message.includes('Network request failed')) {
-        errorMessage = 'Cannot connect to server. Please check if your backend is running.';
+      // More specific error messages
+      let errorMessage = result.error;
+      if (result.error.includes('Invalid email or password')) {
+        errorMessage = 'The email or password you entered is incorrect. Please try again.';
+      } else if (result.error.includes('network') || result.error.includes('connection')) {
+        errorMessage = 'Network error. Please check your connection and try again.';
       }
       
       Alert.alert('Sign In Failed', errorMessage);
     }
-  };
+    
+  } catch (error) {
+    console.error('❌ Sign in error:', error);
+    Alert.alert('Sign In Failed', 'An unexpected error occurred. Please try again.');
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const handleSocialSignIn = async (provider) => {
     Alert.alert('Coming Soon', `${provider} sign-in will be available soon!`);
@@ -144,7 +121,7 @@ export default function SignInScreen() {
     setShowPassword(!showPassword);
   };
 
-  const handleForgotPassword = () => {
+  const handleForgotPassword = async () => {
     if (!email) {
       Alert.alert('Email Required', 'Please enter your email address first.');
       setErrors(prev => ({ ...prev, email: 'Email is required for password reset' }));
@@ -169,6 +146,9 @@ export default function SignInScreen() {
           text: 'Send',
           onPress: async () => {
             try {
+              setIsLoading(true);
+              console.log('📤 Sending forgot password request for:', email);
+              
               const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
                 method: 'POST',
                 headers: {
@@ -180,15 +160,22 @@ export default function SignInScreen() {
               });
 
               const data = await response.json();
+              console.log('📥 Forgot password response:', data);
 
               if (response.ok) {
-                Alert.alert('Success', data.message || 'Password reset email sent! Check your inbox.');
+                Alert.alert(
+                  'Check Your Email', 
+                  data.message || 'If an account with that email exists, we\'ve sent password reset instructions.',
+                  [{ text: 'OK', style: 'default' }]
+                );
               } else {
                 Alert.alert('Error', data.error || 'Failed to send reset email. Please try again.');
               }
             } catch (error) {
-              console.error('Forgot password error:', error);
+              console.error('❌ Forgot password error:', error);
               Alert.alert('Error', 'Network error. Please try again.');
+            } finally {
+              setIsLoading(false);
             }
           },
         },
@@ -208,6 +195,12 @@ export default function SignInScreen() {
     if (errors.password) {
       setErrors(prev => ({ ...prev, password: '' }));
     }
+  };
+
+  const handleQuickTest = async () => {
+    // Quick test with the existing user
+    console.log('🧪 Running quick signin test...');
+    await handleSignIn();
   };
 
   return (
@@ -250,6 +243,7 @@ export default function SignInScreen() {
                   style={styles.backButton}
                   onPress={() => navigation.goBack()}
                   activeOpacity={0.7}
+                  disabled={isLoading}
                 >
                   <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
                   <Text style={styles.backButtonText}>Back</Text>
@@ -260,6 +254,17 @@ export default function SignInScreen() {
                 <Text style={[styles.subtitle, isSmallDevice && styles.subtitleSmall]}>
                   Sign in to continue your learning journey
                 </Text>
+                
+                {/* Quick Test Button - Remove in production */}
+                {__DEV__ && (
+                  <TouchableOpacity 
+                    style={styles.testButton}
+                    onPress={handleQuickTest}
+                    disabled={isLoading}
+                  >
+                    <Text style={styles.testButtonText}>Quick Test Sign In</Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
               {/* Enhanced Form Card */}
@@ -534,6 +539,20 @@ const styles = StyleSheet.create({
   },
   subtitleSmall: {
     fontSize: 14,
+  },
+  testButton: {
+    marginTop: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.5)',
+  },
+  testButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   formCard: {
     backgroundColor: 'rgba(255, 255, 255, 0.95)',

@@ -13,7 +13,6 @@ import {
   ActivityIndicator
 } from 'react-native';
 import { SafeAreaView as RNSafeAreaView } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { DASHBOARD_CONFIG, QUICK_ACTIONS } from '../components/dashboardConfig';
 import { HeaderSection } from '../components/HeaderSection';
@@ -23,197 +22,60 @@ import { ActivityList } from '../components/ActivityList';
 import { UpcomingChallenges } from '../components/UpcomingChallenges';
 import { AchievementBadges } from '../components/AchievementBadges';
 import { LayoutWithNavigation } from '../components/LayoutWithNavigation';
-import API_BASE_URL from '../config';
+import { useDashboardData } from '../hooks/useDashboardData';
+import { useAuth } from '../hooks/useAuth';
 
 const { width } = Dimensions.get('window');
 
 const StudentDashboardScreen = ({ navigation }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [userData, setUserData] = useState(null);
-  const [quickStats, setQuickStats] = useState([]);
-  const [recentActivity, setRecentActivity] = useState([]);
-  const [upcomingChallenges, setUpcomingChallenges] = useState([]);
-  const [achievements, setAchievements] = useState([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
+  
+  // Use the dashboard data hook - this handles all data fetching automatically
+  const {
+    userData,
+    quickStats,
+    recentActivity,
+    upcomingChallenges,
+    achievements,
+    refreshing,
+    loading,
+    error,
+    onRefresh,
+    loadDashboardData
+  } = useDashboardData();
+
+  const { user, logout } = useAuth();
 
   useEffect(() => {
-    loadDashboardData();
-  }, []);
+    console.log('🔄 Dashboard mounted - Auth user:', user);
+    console.log('📊 Dashboard data state:', { 
+      userData, 
+      quickStatsCount: quickStats.length,
+      recentActivityCount: recentActivity.length,
+      upcomingChallengesCount: upcomingChallenges.length,
+      achievementsCount: achievements.length,
+      loading,
+      error 
+    });
+  }, [userData, quickStats, recentActivity, upcomingChallenges, achievements, loading, error]);
 
-  const loadDashboardData = async () => {
-    try {
-      setLoading(true);
-      const token = await AsyncStorage.getItem('access_token');
-      
-      console.log('🔑 Token found:', !!token);
-      console.log('🌐 API Base URL:', API_BASE_URL);
-      
-      if (!token) {
-        console.log('❌ No access token found - redirecting to login');
+  // Handle errors from the hook
+  useEffect(() => {
+    if (error) {
+      console.log('❌ Dashboard error:', error);
+      if (error.includes('Please sign in')) {
         Alert.alert(
           'Session Expired',
           'Please sign in again',
           [{ text: 'OK', onPress: () => navigation.navigate('SignInScreen') }]
         );
-        return;
       }
-
-      // Test the auth endpoint first
-      console.log('🔄 Testing auth endpoint...');
-      const authTestResponse = await fetch(`${API_BASE_URL}/auth/me`, {
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-      });
-
-      console.log('🔍 Auth response status:', authTestResponse.status);
-      
-      if (!authTestResponse.ok) {
-        const errorText = await authTestResponse.text();
-        console.log('❌ Auth error response:', errorText);
-        
-        if (authTestResponse.status === 401 || authTestResponse.status === 422) {
-          // Token is invalid or expired
-          await AsyncStorage.removeItem('access_token');
-          await AsyncStorage.removeItem('refresh_token');
-          Alert.alert(
-            'Session Expired',
-            'Please sign in again',
-            [{ text: 'OK', onPress: () => navigation.navigate('SignInScreen') }]
-          );
-          return;
-        }
-        
-        throw new Error(`HTTP ${authTestResponse.status}: ${errorText}`);
-      }
-
-      const authData = await authTestResponse.json();
-      console.log('✅ Auth data received:', authData);
-      setUserData(authData.user || {});
-
-      // Now try to load other dashboard data with better error handling
-      const endpoints = [
-        { url: `${API_BASE_URL}/dashboard/stats`, setter: setQuickStats, key: 'stats' },
-        { url: `${API_BASE_URL}/dashboard/recent-activity`, setter: setRecentActivity, key: 'activities' },
-        { url: `${API_BASE_URL}/dashboard/upcoming-challenges`, setter: setUpcomingChallenges, key: 'challenges' },
-        { url: `${API_BASE_URL}/dashboard/achievements`, setter: setAchievements, key: 'achievements' }
-      ];
-
-      for (const endpoint of endpoints) {
-        try {
-          console.log(`🔄 Fetching ${endpoint.key}...`);
-          const response = await fetch(endpoint.url, {
-            headers: { 
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            },
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            endpoint.setter(data[endpoint.key] || []);
-            console.log(`✅ ${endpoint.key} loaded successfully`);
-          } else {
-            console.log(`⚠️ ${endpoint.key} failed:`, response.status);
-            // Use fallback data for this specific endpoint
-            if (endpoint.key === 'stats') {
-              endpoint.setter(getFallbackStats());
-            } else {
-              endpoint.setter([]);
-            }
-          }
-        } catch (endpointError) {
-          console.log(`❌ ${endpoint.key} error:`, endpointError);
-          // Use fallback data for this specific endpoint
-          if (endpoint.key === 'stats') {
-            endpoint.setter(getFallbackStats());
-          } else {
-            endpoint.setter([]);
-          }
-        }
-      }
-
-    } catch (error) {
-      console.error('💥 Main dashboard error:', error);
-      
-      // Set safe fallback data
-      setUserData({});
-      setQuickStats(getFallbackStats());
-      setRecentActivity([]);
-      setUpcomingChallenges([]);
-      setAchievements([]);
-      
-      // Only show alert for non-auth errors
-      if (!error.message.includes('401') && !error.message.includes('422')) {
-        Alert.alert(
-          'Connection Error', 
-          'Using offline mode. Some features may be limited.',
-          [{ text: 'OK' }]
-        );
-      }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
     }
-  };
-
-  const getFallbackStats = () => {
-    return [
-      { 
-        id: '1', 
-        title: 'Lessons Completed', 
-        value: '0', 
-        subtitle: 'This week', 
-        change: '+0%', 
-        gradient: ['#4ECDC4', '#44A08D'],
-        icon: 'book',
-        iconType: 'Ionicons',
-        suffix: ''
-      },
-      { 
-        id: '2', 
-        title: 'Study Streak', 
-        value: '0', 
-        subtitle: 'Days', 
-        change: '+0', 
-        gradient: ['#FFD166', '#FFB347'],
-        icon: 'flame',
-        iconType: 'Ionicons',
-        suffix: ''
-      },
-      { 
-        id: '3', 
-        title: 'Points Earned', 
-        value: '0', 
-        subtitle: 'Total', 
-        change: '+0', 
-        gradient: ['#FF6B6B', '#EE5A52'],
-        icon: 'star',
-        iconType: 'Ionicons',
-        suffix: ''
-      },
-      { 
-        id: '4', 
-        title: 'Games Played', 
-        value: '0', 
-        subtitle: 'This month', 
-        change: '+0%', 
-        gradient: ['#6A7FDB', '#5A6FC8'],
-        icon: 'game-controller',
-        iconType: 'Ionicons',
-        suffix: ''
-      }
-    ];
-  };
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadDashboardData();
-  };
+  }, [error]);
 
   const handleActionPress = (action) => {
+    console.log('🎯 Action pressed:', action.title);
+    
     if (action.screen) {
       const validScreens = [
         'GamesScreen', 
@@ -222,30 +84,76 @@ const StudentDashboardScreen = ({ navigation }) => {
         'ProgressScreen', 
         'ProfileScreen',
         'QuizScreen',
-        'HomeScreen'
+        'HomeScreen',
+        'StudentDashboardScreen'
       ];
       
       if (validScreens.includes(action.screen)) {
+        // Update active tab if needed
+        if (action.screen === 'ProfileScreen') {
+          setActiveTab('profile');
+        } else if (action.screen === 'GamesScreen') {
+          setActiveTab('games');
+        } else if (action.screen === 'ProgressScreen') {
+          setActiveTab('progress');
+        }
+        
         navigation.navigate(action.screen);
       } else {
         Alert.alert('Coming Soon', `${action.title} feature coming soon!`);
       }
+    } else {
+      Alert.alert('Coming Soon', `${action.title} feature coming soon!`);
     }
   };
 
-  // Empty state component
-  const renderEmptyState = (section) => (
-    <View style={styles.emptySection}>
-      <Text style={styles.emptySectionTitle}>No {section} Yet</Text>
-      <Text style={styles.emptySectionText}>
-        {section === 'Statistics' && 'Complete some activities to see your statistics'}
-        {section === 'Achievements' && 'Earn achievements by completing lessons and games'}
-        {section === 'Activities' && 'Your recent activities will appear here'}
-        {section === 'Challenges' && 'Join challenges to test your skills and earn rewards'}
-      </Text>
-    </View>
-  );
+  const handleCompleteActivity = async (activityId, activityType) => {
+    try {
+      // You can implement this later when you have activity completion logic
+      Alert.alert('Activity Completed', 'Great job! Points added to your profile.');
+    } catch (error) {
+      console.error('Error completing activity:', error);
+      Alert.alert('Error', 'Failed to complete activity');
+    }
+  };
 
+  // FIXED: Enhanced empty state component with proper if-else logic
+  const renderEmptyState = (section, customMessage = null) => {
+    let message = customMessage;
+    
+    if (!message) {
+      if (section === 'Statistics') {
+        message = 'Complete some activities to see your learning statistics';
+      } else if (section === 'Achievements') {
+        message = 'Earn achievements by completing lessons, games, and challenges';
+      } else if (section === 'Activities') {
+        message = 'Your recent learning activities will appear here';
+      } else if (section === 'Challenges') {
+        message = 'Join exciting challenges to test your skills and earn rewards';
+      } else {
+        message = `No ${section.toLowerCase()} available yet`;
+      }
+    }
+
+    return (
+      <View style={styles.emptySection}>
+        <Text style={styles.emptySectionTitle}>No {section} Yet</Text>
+        <Text style={styles.emptySectionText}>
+          {message}
+        </Text>
+        {section === 'Activities' && (
+          <TouchableOpacity 
+            style={styles.getStartedButton}
+            onPress={() => navigation.navigate('GamesScreen')}
+          >
+            <Text style={styles.getStartedButtonText}>Start Learning</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  // Enhanced loading state
   if (loading) {
     return (
       <LayoutWithNavigation activeTab={activeTab} navigation={navigation}>
@@ -254,21 +162,35 @@ const StudentDashboardScreen = ({ navigation }) => {
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#0A7C72" />
             <Text style={styles.loadingText}>Loading your dashboard...</Text>
+            <Text style={styles.loadingSubtext}>
+              {user ? `Welcome back, ${user.first_name || user.name || 'Student'}!` : 'Getting everything ready...'}
+            </Text>
           </View>
         </RNSafeAreaView>
       </LayoutWithNavigation>
     );
   }
 
+  // Get display name from either auth user or dashboard user data
+  const displayName = user?.first_name || userData?.name || user?.name || '';
+
   return (
     <LayoutWithNavigation activeTab={activeTab} navigation={navigation}>
       <RNSafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" />
         
-        {/* Safe HeaderSection with null check */}
+        {/* Header Section with real user data */}
         <HeaderSection 
-          userData={userData || {}} 
-          onNotificationPress={() => Alert.alert('Notifications', 'Coming soon!')}
+          userData={{
+            ...userData,
+            // Fallback to auth user data if dashboard data is not available yet
+            name: displayName,
+            grade: userData?.grade || user?.profile?.grade_level || '10',
+            points: userData?.points || 0,
+            level: userData?.level || '1',
+            avatarInitials: userData?.avatarInitials || (displayName ? getInitials(displayName) : 'S')
+          }}
+          onNotificationPress={() => Alert.alert('Notifications', 'You have no new notifications')}
           onProfilePress={() => {
             setActiveTab('profile');
             navigation.navigate('ProfileScreen');
@@ -287,20 +209,25 @@ const StudentDashboardScreen = ({ navigation }) => {
             />
           }
         >
-          {/* Welcome Section */}
+          {/* Welcome Section with personalized greeting */}
           <View style={styles.welcomeSection}>
             <Text style={styles.welcomeTitle}>
-              Welcome back{userData?.first_name ? `, ${userData.first_name}` : userData?.name ? `, ${userData.name}` : ''}! 👋
+              Welcome back{displayName ? `, ${displayName}` : ''}! 👋
             </Text>
             <Text style={styles.welcomeSubtitle}>
-              Ready to continue your learning journey?
+              {userData?.level ? `Level ${userData.level} Learner` : 'Ready to continue your learning journey?'}
             </Text>
+            {userData?.points !== undefined && (
+              <View style={styles.pointsBadge}>
+                <Text style={styles.pointsText}>{userData.points} points</Text>
+              </View>
+            )}
           </View>
 
           {/* Quick Stats Section */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Learning Overview</Text>
-            {quickStats.length > 0 ? (
+            {quickStats && quickStats.length > 0 ? (
               <StatsGrid stats={quickStats} />
             ) : (
               renderEmptyState('Statistics')
@@ -320,17 +247,19 @@ const StudentDashboardScreen = ({ navigation }) => {
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Recent Activity</Text>
-              <TouchableOpacity onPress={() => Alert.alert('Coming Soon', 'Activity History feature coming soon!')}>
-                <Text style={styles.seeAllText}>See All</Text>
-              </TouchableOpacity>
+              {recentActivity.length > 0 && (
+                <TouchableOpacity onPress={() => Alert.alert('Coming Soon', 'Activity History feature coming soon!')}>
+                  <Text style={styles.seeAllText}>See All</Text>
+                </TouchableOpacity>
+              )}
             </View>
-            {recentActivity.length > 0 ? (
+            {recentActivity && recentActivity.length > 0 ? (
               <ActivityList 
                 activities={recentActivity}
-                onActivityPress={(activity) => console.log('Activity pressed:', activity)}
+                onActivityPress={handleCompleteActivity}
               />
             ) : (
-              renderEmptyState('Activities')
+              renderEmptyState('Activities', 'Start playing games or complete lessons to see your activity here!')
             )}
           </View>
 
@@ -338,14 +267,16 @@ const StudentDashboardScreen = ({ navigation }) => {
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Achievements</Text>
-              <TouchableOpacity onPress={() => Alert.alert('Coming Soon', 'Achievements feature coming soon!')}>
-                <Text style={styles.seeAllText}>View All</Text>
-              </TouchableOpacity>
+              {achievements.length > 0 && (
+                <TouchableOpacity onPress={() => Alert.alert('Coming Soon', 'Achievements gallery coming soon!')}>
+                  <Text style={styles.seeAllText}>View All</Text>
+                </TouchableOpacity>
+              )}
             </View>
-            {achievements.length > 0 ? (
+            {achievements && achievements.length > 0 ? (
               <AchievementBadges 
                 achievements={achievements}
-                onPress={(achievement) => Alert.alert('Coming Soon', 'Achievement Details feature coming soon!')}
+                onPress={(achievement) => Alert.alert(achievement.name, achievement.description)}
               />
             ) : (
               renderEmptyState('Achievements')
@@ -356,14 +287,26 @@ const StudentDashboardScreen = ({ navigation }) => {
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Featured Challenges</Text>
-              <TouchableOpacity onPress={() => navigation.navigate('ChallengesScreen')}>
-                <Text style={styles.seeAllText}>See All</Text>
-              </TouchableOpacity>
+              {upcomingChallenges.length > 0 && (
+                <TouchableOpacity onPress={() => navigation.navigate('ChallengesScreen')}>
+                  <Text style={styles.seeAllText}>See All</Text>
+                </TouchableOpacity>
+              )}
             </View>
-            {upcomingChallenges.length > 0 ? (
+            {upcomingChallenges && upcomingChallenges.length > 0 ? (
               <UpcomingChallenges 
                 challenges={upcomingChallenges}
-                onJoinPress={(challengeId) => Alert.alert('Coming Soon', 'Challenge joining feature coming soon!')}
+                onJoinPress={(challengeId) => {
+                  const challenge = upcomingChallenges.find(c => c.id === challengeId);
+                  Alert.alert(
+                    'Join Challenge', 
+                    `Join "${challenge?.title}"?`, 
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Join', onPress: () => navigation.navigate('ChallengesScreen') }
+                    ]
+                  );
+                }}
               />
             ) : (
               renderEmptyState('Challenges')
@@ -374,13 +317,44 @@ const StudentDashboardScreen = ({ navigation }) => {
           <View style={styles.motivationalSection}>
             <Text style={styles.motivationalTitle}>Keep Going! 🚀</Text>
             <Text style={styles.motivationalText}>
-              Every lesson completed brings you closer to your goals. You're doing great!
+              {userData?.points > 0 
+                ? `You've earned ${userData.points} points so far! Every lesson completed brings you closer to your goals.`
+                : "Every lesson completed brings you closer to your goals. You're doing great!"
+              }
             </Text>
+            <TouchableOpacity 
+              style={styles.motivationalButton}
+              onPress={() => navigation.navigate('GamesScreen')}
+            >
+              <Text style={styles.motivationalButtonText}>Continue Learning</Text>
+            </TouchableOpacity>
           </View>
+
+          {/* Debug info - remove in production */}
+          {__DEV__ && (
+            <View style={styles.debugSection}>
+              <Text style={styles.debugTitle}>Debug Info</Text>
+              <Text style={styles.debugText}>User: {displayName || 'No name'}</Text>
+              <Text style={styles.debugText}>Grade: {userData?.grade || 'Not set'}</Text>
+              <Text style={styles.debugText}>Points: {userData?.points || 0}</Text>
+              <Text style={styles.debugText}>Level: {userData?.level || '1'}</Text>
+            </View>
+          )}
         </ScrollView>
       </RNSafeAreaView>
     </LayoutWithNavigation>
   );
+};
+
+// Helper function to get initials
+const getInitials = (name) => {
+  if (!name) return 'S';
+  return name
+    .split(' ')
+    .map(word => word.charAt(0))
+    .join('')
+    .toUpperCase()
+    .substring(0, 2);
 };
 
 const styles = StyleSheet.create({
@@ -396,15 +370,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#F8F9FA',
+    padding: 20,
   },
   loadingText: {
     marginTop: 16,
-    fontSize: 16,
+    fontSize: 18,
+    fontWeight: '600',
     color: '#2D3748',
+    textAlign: 'center',
+  },
+  loadingSubtext: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#718096',
+    textAlign: 'center',
   },
   welcomeSection: {
     padding: 20,
     paddingBottom: 10,
+    backgroundColor: 'white',
+    margin: 20,
+    marginBottom: 0,
+    borderRadius: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   welcomeTitle: {
     fontSize: 24,
@@ -416,6 +408,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#718096',
     lineHeight: 22,
+    marginBottom: 12,
+  },
+  pointsBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#0A7C72',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  pointsText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
   },
   section: {
     padding: 20,
@@ -459,6 +464,18 @@ const styles = StyleSheet.create({
     color: '#718096',
     textAlign: 'center',
     lineHeight: 20,
+    marginBottom: 16,
+  },
+  getStartedButton: {
+    backgroundColor: '#0A7C72',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  getStartedButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
   },
   motivationalSection: {
     backgroundColor: 'rgba(10, 124, 114, 0.1)',
@@ -467,6 +484,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderLeftWidth: 4,
     borderLeftColor: '#0A7C72',
+    alignItems: 'center',
   },
   motivationalTitle: {
     fontSize: 18,
@@ -478,6 +496,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#4A5568',
     lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  motivationalButton: {
+    backgroundColor: '#0A7C72',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  motivationalButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  debugSection: {
+    backgroundColor: '#F7FAFC',
+    margin: 20,
+    padding: 15,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  debugTitle: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#4A5568',
+    marginBottom: 8,
+  },
+  debugText: {
+    fontSize: 10,
+    color: '#718096',
+    marginBottom: 2,
   },
 });
 

@@ -1,4 +1,4 @@
-// components/EducationalContentScreen.js
+// components/EducationalContentScreen.js - UPDATED WITH BACKEND INTEGRATION
 import React, { useState } from 'react';
 import {
   View,
@@ -11,7 +11,9 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import OpenAIService from '../services/openaiService';
+import API_BASE_URL from '../config';
 
 export default function EducationalContentScreen() {
   const [selectedSubject, setSelectedSubject] = useState('Mathematics');
@@ -30,6 +32,64 @@ export default function EducationalContentScreen() {
 
   const grades = ['10', '11', '12'];
 
+  // Track lesson completion to backend
+  const trackLessonCompletion = async (lessonData) => {
+    try {
+      const token = await AsyncStorage.getItem('access_token');
+      if (!token) return;
+
+      const response = await fetch(`${API_BASE_URL}/progress/lesson-completed`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          subject: selectedSubject,
+          grade: selectedGrade,
+          topic: selectedTopic,
+          content_type: 'lesson',
+          points_earned: 10
+        }),
+      });
+
+      if (response.ok) {
+        console.log('✅ Lesson completion tracked');
+      }
+    } catch (error) {
+      console.log('⚠️ Failed to track lesson completion:', error.message);
+    }
+  };
+
+  // Track question completion to backend
+  const trackQuestionsCompletion = async (questionsData) => {
+    try {
+      const token = await AsyncStorage.getItem('access_token');
+      if (!token) return;
+
+      const response = await fetch(`${API_BASE_URL}/progress/quiz-completed`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          subject: selectedSubject,
+          grade: selectedGrade,
+          topic: selectedTopic,
+          questions_count: questionsData.length,
+          points_earned: 15
+        }),
+      });
+
+      if (response.ok) {
+        console.log('✅ Questions completion tracked');
+      }
+    } catch (error) {
+      console.log('⚠️ Failed to track questions completion:', error.message);
+    }
+  };
+
   const generateContent = async (type) => {
     setLoading(true);
     setError(null);
@@ -41,8 +101,12 @@ export default function EducationalContentScreen() {
       let result;
       if (type === 'questions') {
         result = await OpenAIService.generateExamQuestions(selectedSubject, selectedGrade, selectedTopic, 3);
+        // Track questions completion
+        await trackQuestionsCompletion(result);
       } else {
         result = await OpenAIService.generateLessonContent(selectedSubject, selectedGrade, selectedTopic);
+        // Track lesson completion
+        await trackLessonCompletion(result);
       }
 
       setContent({

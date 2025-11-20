@@ -1,13 +1,16 @@
 import os
 from datetime import timedelta
 
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))  # absolute path to backend folder
+INSTANCE_DB_PATH = os.path.join(BASE_DIR, 'instance', 'edufun.db')
+
 class Config:
     # Security
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'your-secret-key-change-in-production'
     JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or 'jwt-secret-key-change-in-production'
     
-    # Database
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///app.db'
+    # Database — force using instance folder
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or f"sqlite:///{INSTANCE_DB_PATH}"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
     # JWT Configuration

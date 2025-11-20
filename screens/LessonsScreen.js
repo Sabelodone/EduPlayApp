@@ -1,4 +1,3 @@
-// screens/LessonsScreen.js
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -25,563 +24,36 @@ import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { LayoutWithNavigation } from '../components/LayoutWithNavigation';
-import API_BASE_URL from '../config';
+import apiService from '../services/apiService';
 
 const { width, height } = Dimensions.get('window');
 
-// API Keys
-const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
-
-// Complete video data for all subjects and grades
-const VIDEO_DATA = {
+// Fallback data
+const SCHOOL_CURRICULUM_FALLBACK = {
   'Mathematics': {
-    '10': {
-      'Algebra': [
-        {
-          id: 'KP1QlnA7K1o',
-          title: 'Algebra Basics - Full Course',
-          duration: '15:30',
-          channel: 'The Organic Chemistry Tutor',
-          description: 'Complete algebra introduction covering variables, expressions, and equations'
-        },
-        {
-          id: 'NybHckSEQBI',
-          title: 'Linear Equations Practice',
-          duration: '12:45',
-          channel: 'Math and Science',
-          description: 'Step-by-step linear equation solving with practice problems'
-        }
-      ],
-      'Geometry': [
-        {
-          id: 'HIFb-a8b39s',
-          title: 'Geometry Introduction',
-          duration: '18:20',
-          channel: 'The Organic Chemistry Tutor',
-          description: 'Basic geometry concepts including angles, lines, and shapes'
-        }
-      ],
-      'Trigonometry': [
-        {
-          id: 'T2O0SmGabc4',
-          title: 'Trigonometry Basics',
-          duration: '16:15',
-          channel: 'Mario\'s Math Tutoring',
-          description: 'Introduction to trigonometric functions and identities'
-        }
-      ],
-      'Statistics': [
-        {
-          id: 'h8EYEJ32oQ8',
-          title: 'Statistics Fundamentals',
-          duration: '14:30',
-          channel: 'The Organic Chemistry Tutor',
-          description: 'Basic statistical concepts and data analysis'
-        }
-      ]
-    },
-    '11': {
-      'Functions': [
-        {
-          id: 'FXItlSSEZ1Q',
-          title: 'Functions and Graphs',
-          duration: '20:15',
-          channel: 'Mario\'s Math Tutoring',
-          description: 'Understanding functions, graphing, and function properties'
-        }
-      ],
-      'Calculus': [
-        {
-          id: 'rfjf7bCtCIk',
-          title: 'Calculus Fundamentals',
-          duration: '25:40',
-          channel: 'Professor Dave Explains',
-          description: 'Introduction to differential and integral calculus'
-        }
-      ],
-      'Probability': [
-        {
-          id: 'uzkc-qNVoOk',
-          title: 'Probability Theory',
-          duration: '18:25',
-          channel: 'The Organic Chemistry Tutor',
-          description: 'Probability concepts and problem solving'
-        }
-      ]
-    },
-    '12': {
-      'Calculus': [
-        {
-          id: 'rfjf7bCtCIk',
-          title: 'Calculus Fundamentals',
-          duration: '25:40',
-          channel: 'Professor Dave Explains',
-          description: 'Introduction to differential and integral calculus'
-        },
-        {
-          id: 'axYQ1T34pLc',
-          title: 'Advanced Calculus',
-          duration: '22:30',
-          channel: 'Professor Leonard',
-          description: 'Advanced calculus concepts and applications'
-        }
-      ],
-      'Complex Numbers': [
-        {
-          id: 'SP-YJe7Vldo',
-          title: 'Complex Numbers Explained',
-          duration: '19:45',
-          channel: 'NancyPi',
-          description: 'Understanding complex numbers and operations'
-        }
-      ],
-      'Advanced Algebra': [
-        {
-          id: 'VSKx1p7rS7s',
-          title: 'Advanced Algebra Concepts',
-          duration: '21:20',
-          channel: 'The Organic Chemistry Tutor',
-          description: 'Advanced algebraic equations and functions'
-        }
-      ]
-    }
+    '10': ['Algebra', 'Geometry', 'Trigonometry'],
+    '11': ['Functions', 'Calculus Basics'],
+    '12': ['Calculus', 'Statistics']
   },
   'English': {
-    '10': {
-      'Grammar': [
-        {
-          id: '8qBwN_s6IjE',
-          title: 'English Grammar Basics',
-          duration: '14:25',
-          channel: 'Shaw English Online',
-          description: 'Fundamental grammar rules and sentence structure'
-        }
-      ],
-      'Essay Writing': [
-        {
-          id: 'LK5M2FKDw2c',
-          title: 'Essay Writing Masterclass',
-          duration: '16:40',
-          channel: 'English Lessons',
-          description: 'Learn how to write compelling essays'
-        }
-      ],
-      'Comprehension': [
-        {
-          id: 'zL-1o8l6Pw8',
-          title: 'Reading Comprehension',
-          duration: '13:20',
-          channel: 'Learn English',
-          description: 'Improve reading comprehension skills'
-        }
-      ]
-    },
-    '11': {
-      'Advanced Writing': [
-        {
-          id: 'V3aK22k5-d8',
-          title: 'Advanced Essay Writing',
-          duration: '18:30',
-          channel: 'Writing with Andrew',
-          description: 'Advanced writing techniques and structures'
-        }
-      ],
-      'Literature': [
-        {
-          id: '9mT6W7cIrY0',
-          title: 'Literature Analysis',
-          duration: '17:15',
-          channel: 'CrashCourse',
-          description: 'Analyzing literary works and themes'
-        }
-      ],
-      'Poetry': [
-        {
-          id: 'JmkgAWAGtbE',
-          title: 'Poetry Analysis',
-          duration: '15:50',
-          channel: 'The Poetry Foundation',
-          description: 'Understanding and analyzing poetry'
-        }
-      ]
-    },
-    '12': {
-      'Critical Analysis': [
-        {
-          id: 'zL-1o8l6Pw8',
-          title: 'Critical Thinking Skills',
-          duration: '22:10',
-          channel: 'English Lessons',
-          description: 'Developing critical analysis abilities'
-        }
-      ],
-      'Drama': [
-        {
-          id: 'I6YrDUd4W7M',
-          title: 'Drama and Theater',
-          duration: '19:35',
-          channel: 'Literature TV',
-          description: 'Understanding dramatic literature'
-        }
-      ],
-      'Novels': [
-        {
-          id: 'vrWnSYm8T4k',
-          title: 'Novel Analysis',
-          duration: '24:20',
-          channel: 'CrashCourse',
-          description: 'Analyzing novels and narrative techniques'
-        }
-      ]
-    }
+    '10': ['Grammar', 'Literature'],
+    '11': ['Comprehension', 'Writing'],
+    '12': ['Poetry', 'Drama']
   },
   'Accounting': {
-    '10': {
-      'Basic Accounting': [
-        {
-          id: 'G4qshy9d8a8',
-          title: 'Accounting Principles',
-          duration: '19:35',
-          channel: 'Accounting Stuff',
-          description: 'Introduction to accounting concepts and principles'
-        }
-      ],
-      'Ledgers': [
-        {
-          id: 'Y7cP8d4Xo8E',
-          title: 'Ledger Accounting',
-          duration: '16:45',
-          channel: 'Accounting Coach',
-          description: 'Understanding ledger systems and entries'
-        }
-      ],
-      'Balance Sheet': [
-        {
-          id: 'rG0y7Y7-QoM',
-          title: 'Balance Sheet Basics',
-          duration: '14:20',
-          channel: 'Corporate Finance Institute',
-          description: 'Creating and analyzing balance sheets'
-        }
-      ]
-    },
-    '11': {
-      'Cost Accounting': [
-        {
-          id: 'V3aK22k5-d8',
-          title: 'Cost Accounting Fundamentals',
-          duration: '21:30',
-          channel: 'Accounting University',
-          description: 'Cost accounting methods and applications'
-        }
-      ],
-      'Financial Statements': [
-        {
-          id: '9mT6W7cIrY0',
-          title: 'Financial Statement Analysis',
-          duration: '23:15',
-          channel: 'Corporate Finance Institute',
-          description: 'Analyzing financial statements'
-        }
-      ],
-      'Auditing': [
-        {
-          id: 'JmkgAWAGtbE',
-          title: 'Auditing Principles',
-          duration: '18:40',
-          channel: 'Audit Academy',
-          description: 'Introduction to auditing concepts'
-        }
-      ]
-    },
-    '12': {
-      'Advanced Accounting': [
-        {
-          id: 'V3aK22k5-d8',
-          title: 'Advanced Accounting Concepts',
-          duration: '24:15',
-          channel: 'Accounting University',
-          description: 'Complex accounting scenarios and principles'
-        }
-      ],
-      'Taxation': [
-        {
-          id: '9mT6W7cIrY0',
-          title: 'Taxation Fundamentals',
-          duration: '20:25',
-          channel: 'Tax Foundation',
-          description: 'Understanding tax systems and calculations'
-        }
-      ],
-      'Management Accounting': [
-        {
-          id: 'JmkgAWAGtbE',
-          title: 'Management Accounting',
-          duration: '22:10',
-          channel: 'Corporate Finance Institute',
-          description: 'Accounting for management decisions'
-        }
-      ]
-    }
+    '10': ['Basic Accounting', 'Financial Statements'],
+    '11': ['Cost Accounting', 'Management Accounting'],
+    '12': ['Financial Management', 'Auditing']
   },
   'Physical Sciences': {
-    '10': {
-      'Physics Basics': [
-        {
-          id: 'ur0pU_imctw',
-          title: 'Newton\'s Laws of Motion',
-          duration: '17:45',
-          channel: 'Physics Girl',
-          description: 'Understanding motion, forces, and Newton\'s laws'
-        }
-      ],
-      'Chemistry Basics': [
-        {
-          id: 'FSyAehMdpyI',
-          title: 'Chemistry Fundamentals',
-          duration: '16:30',
-          channel: 'Tyler DeWitt',
-          description: 'Basic chemistry concepts and reactions'
-        }
-      ],
-      'Matter': [
-        {
-          id: '9nSGgO2gX4c',
-          title: 'States of Matter',
-          duration: '14:15',
-          channel: 'Amoeba Sisters',
-          description: 'Understanding different states of matter'
-        }
-      ]
-    },
-    '11': {
-      'Mechanics': [
-        {
-          id: 'V3aK22k5-d8',
-          title: 'Mechanics and Motion',
-          duration: '23:30',
-          channel: 'Physics Videos',
-          description: 'Advanced mechanics concepts'
-        }
-      ],
-      'Chemical Reactions': [
-        {
-          id: '9mT6W7cIrY0',
-          title: 'Chemical Reactions',
-          duration: '19:20',
-          channel: 'Bozeman Science',
-          description: 'Types of chemical reactions and balancing'
-        }
-      ],
-      'Waves': [
-        {
-          id: 'JmkgAWAGtbE',
-          title: 'Wave Properties',
-          duration: '18:45',
-          channel: 'Physics Girl',
-          description: 'Understanding wave mechanics and properties'
-        }
-      ]
-    },
-    '12': {
-      'Electricity': [
-        {
-          id: 'V3aK22k5-d8',
-          title: 'Electrical Circuits',
-          duration: '26:40',
-          channel: 'Physics Videos',
-          description: 'Circuit analysis and electrical principles'
-        }
-      ],
-      'Organic Chemistry': [
-        {
-          id: '9mT6W7cIrY0',
-          title: 'Organic Chemistry Basics',
-          duration: '24:25',
-          channel: 'The Organic Chemistry Tutor',
-          description: 'Introduction to organic compounds'
-        }
-      ],
-      'Modern Physics': [
-        {
-          id: 'JmkgAWAGtbE',
-          title: 'Modern Physics Concepts',
-          duration: '22:15',
-          channel: 'Professor Dave Explains',
-          description: 'Quantum mechanics and relativity basics'
-        }
-      ]
-    }
+    '10': ['Physics Basics', 'Chemistry Basics'],
+    '11': ['Mechanics', 'Chemical Reactions'],
+    '12': ['Electricity', 'Organic Chemistry']
   }
 };
 
-// Exam papers data
-const EXAM_PAPERS = {
-  'Mathematics': {
-    '10': [
-      {
-        id: '1',
-        title: 'Grade 10 Mathematics Paper 1 - 2023',
-        questions: 8,
-        duration: '2 hours',
-        subject: 'Mathematics',
-        grade: '10',
-        year: '2023',
-        downloadUrl: 'https://www.education.gov.za/Portals/0/Documents/Publications/Mathematics%20P1%20Gr10%202023.pdf'
-      },
-      {
-        id: '2',
-        title: 'Grade 10 Mathematics Paper 2 - 2023',
-        questions: 7,
-        duration: '2 hours',
-        subject: 'Mathematics',
-        grade: '10',
-        year: '2023',
-        downloadUrl: 'https://www.education.gov.za/Portals/0/Documents/Publications/Mathematics%20P2%20Gr10%202023.pdf'
-      }
-    ],
-    '11': [
-      {
-        id: '3',
-        title: 'Grade 11 Mathematics Paper 1 - 2023',
-        questions: 10,
-        duration: '2.5 hours',
-        subject: 'Mathematics',
-        grade: '11',
-        year: '2023',
-        downloadUrl: 'https://www.education.gov.za/Portals/0/Documents/Publications/Mathematics%20P1%20Gr11%202023.pdf'
-      }
-    ],
-    '12': [
-      {
-        id: '4',
-        title: 'Grade 12 Mathematics Paper 1 - 2023',
-        questions: 12,
-        duration: '3 hours',
-        subject: 'Mathematics',
-        grade: '12',
-        year: '2023',
-        downloadUrl: 'https://www.education.gov.za/Portals/0/Documents/Publications/Mathematics%20P1%20Gr12%202023.pdf'
-      }
-    ]
-  },
-  'English': {
-    '10': [
-      {
-        id: '5',
-        title: 'Grade 10 English Paper 1 - 2023',
-        questions: 8,
-        duration: '2 hours',
-        subject: 'English',
-        grade: '10',
-        year: '2023',
-        downloadUrl: 'https://www.education.gov.za/Portals/0/Documents/Publications/English%20P1%20Gr10%202023.pdf'
-      }
-    ],
-    '11': [
-      {
-        id: '6',
-        title: 'Grade 11 English Paper 1 - 2023',
-        questions: 9,
-        duration: '2.5 hours',
-        subject: 'English',
-        grade: '11',
-        year: '2023',
-        downloadUrl: 'https://www.education.gov.za/Portals/0/Documents/Publications/English%20P1%20Gr11%202023.pdf'
-      }
-    ]
-  },
-  'Accounting': {
-    '10': [
-      {
-        id: '7',
-        title: 'Grade 10 Accounting Paper 1 - 2023',
-        questions: 9,
-        duration: '2.5 hours',
-        subject: 'Accounting',
-        grade: '10',
-        year: '2023',
-        downloadUrl: 'https://www.education.gov.za/Portals/0/Documents/Publications/Accounting%20P1%20Gr10%202023.pdf'
-      }
-    ]
-  },
-  'Physical Sciences': {
-    '10': [
-      {
-        id: '8',
-        title: 'Grade 10 Physical Sciences Paper 1 - 2023',
-        questions: 11,
-        duration: '2.5 hours',
-        subject: 'Physical Sciences',
-        grade: '10',
-        year: '2023',
-        downloadUrl: 'https://www.education.gov.za/Portals/0/Documents/Publications/Physical%20Sciences%20P1%20Gr10%202023.pdf'
-      }
-    ]
-  }
-};
-
-// Study notes data
-const STUDY_NOTES = {
-  'Mathematics': {
-    'Algebra': `# Algebra Fundamentals
-
-## Key Concepts:
-- **Variables**: Symbols that represent unknown values
-- **Expressions**: Combinations of variables and numbers
-- **Equations**: Mathematical statements with equals sign
-
-## Basic Rules:
-1. Commutative Property: a + b = b + a
-2. Associative Property: (a + b) + c = a + (b + c)
-3. Distributive Property: a(b + c) = ab + ac
-
-## Example Problems:
-1. Solve: 2x + 5 = 13
-   Solution: x = 4
-2. Simplify: 3(x + 2) - 2x
-   Solution: x + 6
-
-## Common Formulas:
-- Quadratic Formula: x = [-b ± √(b² - 4ac)] / 2a
-- Slope Formula: m = (y₂ - y₁) / (x₂ - x₁)`,
-
-    'Geometry': `# Geometry Basics
-
-## Key Concepts:
-- **Points**: Locations in space
-- **Lines**: Straight paths extending infinitely
-- **Angles**: Formed by two rays sharing an endpoint
-
-## Basic Shapes:
-- Triangles: 3 sides, sum of angles = 180°
-- Quadrilaterals: 4 sides, sum of angles = 360°
-- Circles: All points equidistant from center
-
-## Important Formulas:
-- Area of triangle: A = ½ × base × height
-- Area of circle: A = πr²
-- Perimeter: Sum of all sides`
-  },
-  'English': {
-    'Grammar': `# English Grammar Essentials
-
-## Parts of Speech:
-- **Nouns**: People, places, things, ideas
-- **Verbs**: Actions or states of being
-- **Adjectives**: Describe nouns
-- **Adverbs**: Modify verbs, adjectives, other adverbs
-
-## Sentence Structure:
-- Subject + Verb + Object
-- Simple, compound, and complex sentences
-- Proper punctuation usage
-
-## Common Rules:
-- Subject-verb agreement
-- Proper tense usage
-- Pronoun reference clarity`
-  }
+const getFallbackTopics = (subject, grade) => {
+  return SCHOOL_CURRICULUM_FALLBACK[subject]?.[grade] || ['General Topics'];
 };
 
 export default function LessonsScreen({ navigation }) {
@@ -604,24 +76,33 @@ export default function LessonsScreen({ navigation }) {
   const [userProfile, setUserProfile] = useState(null);
   const [generatedNotes, setGeneratedNotes] = useState({});
   const [loadingNotes, setLoadingNotes] = useState({});
+  
+  // New state for backend data
+  const [curriculum, setCurriculum] = useState(null);
+  const [topics, setTopics] = useState([]);
+  const [videos, setVideos] = useState([]);
+  const [examPapers, setExamPapers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [subjectProgress, setSubjectProgress] = useState({});
+  const [error, setError] = useState(null);
 
   const grades = ['10', '11', '12'];
   const subjects = ['Mathematics', 'English', 'Accounting', 'Physical Sciences'];
 
-  // Load user progress and streak
+  // Load data from backend
   useEffect(() => {
     loadUserData();
-  }, []);
+    fetchCurriculumData();
+  }, [selectedSubject, selectedGrade]);
 
   const loadUserData = async () => {
     try {
       await fetchUserProfile();
+      await fetchProgressOverview();
       
-      const progressData = await AsyncStorage.getItem('userProgress');
       const streakData = await AsyncStorage.getItem('studyStreak');
       const completedData = await AsyncStorage.getItem('completedVideos');
       
-      if (progressData) setProgress(JSON.parse(progressData));
       if (streakData) setStreak(parseInt(streakData));
       if (completedData) setCompletedVideos(JSON.parse(completedData));
     } catch (error) {
@@ -631,52 +112,145 @@ export default function LessonsScreen({ navigation }) {
 
   const fetchUserProfile = async () => {
     try {
-      const token = await AsyncStorage.getItem('access_token');
-      const response = await fetch(`${API_BASE_URL}/auth/me`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setUserProfile(data.user);
-      }
+      const data = await apiService.getCurrentUser();
+      setUserProfile(data.user);
     } catch (error) {
       console.error('Error fetching user profile:', error);
     }
   };
 
+  const fetchCurriculumData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      console.log('🔄 Fetching curriculum data...');
+      console.log(`Selected: ${selectedSubject}, Grade: ${selectedGrade}`);
+
+      // Test basic connection first
+      try {
+        console.log('🧪 Testing debug endpoint...');
+        const debugResponse = await fetch('http://192.168.1.196:5000/api/lessons/debug/test');
+        const debugData = await debugResponse.json();
+        console.log('✅ Debug endpoint:', debugData);
+      } catch (debugError) {
+        console.error('❌ Debug endpoint failed:', debugError);
+        setError('Cannot connect to lessons API. Please check backend routes.');
+        setLoading(false);
+        return;
+      }
+
+      // Test auth endpoint
+      try {
+        console.log('🔐 Testing auth endpoint...');
+        const authResponse = await apiService.request('/lessons/debug/auth-test');
+        console.log('✅ Auth test:', authResponse);
+      } catch (authError) {
+        console.error('❌ Auth test failed:', authError);
+        setError('Authentication issue. Please try logging out and back in.');
+        setLoading(false);
+        return;
+      }
+
+      // Now try the actual curriculum endpoints
+      console.log('📚 Fetching curriculum...');
+      try {
+        const curriculumData = await apiService.getCurriculum();
+        console.log('✅ Curriculum data received');
+        setCurriculum(curriculumData.curriculum);
+      } catch (curriculumError) {
+        console.error('❌ Curriculum fetch failed:', curriculumError);
+        // Use fallback curriculum
+        setCurriculum(SCHOOL_CURRICULUM_FALLBACK);
+      }
+      
+      // Get topics for current subject and grade
+      console.log(`🔍 Fetching topics for ${selectedSubject} Grade ${selectedGrade}...`);
+      try {
+        const topicsData = await apiService.getTopics(selectedSubject, selectedGrade);
+        console.log('📖 Topics data received:', topicsData);
+        setTopics(topicsData.topics || []);
+      } catch (topicsError) {
+        console.error('❌ Topics fetch failed:', topicsError);
+        // Use fallback topics
+        const fallbackTopics = getFallbackTopics(selectedSubject, selectedGrade);
+        setTopics(fallbackTopics);
+      }
+
+      // Get exam papers
+      try {
+        const examData = await apiService.getExamPapers(selectedSubject, selectedGrade);
+        console.log('📝 Exam papers received:', examData);
+        setExamPapers(examData.exam_papers || []);
+      } catch (examError) {
+        console.error('❌ Exam papers fetch failed:', examError);
+        setExamPapers([]);
+      }
+
+    } catch (error) {
+      console.error('❌ Error in fetchCurriculumData:', error);
+      setError(`Failed to load data: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchTopicVideos = async (topic) => {
+    try {
+      const data = await apiService.getTopicVideos(selectedSubject, selectedGrade, topic);
+      return data.videos || [];
+    } catch (error) {
+      console.error('Error fetching topic videos:', error);
+      return [];
+    }
+  };
+
+  const fetchProgressOverview = async () => {
+    try {
+      const data = await apiService.getProgressOverview();
+      setProgress(data.overview);
+      setSubjectProgress(data.subject_progress || {});
+    } catch (error) {
+      console.error('Error fetching progress overview:', error);
+    }
+  };
+
   const syncVideoProgress = async (videoId, topic, action = 'completed') => {
     try {
-      const token = await AsyncStorage.getItem('access_token');
-      await fetch(`${API_BASE_URL}/progress/video-progress`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          video_id: videoId,
-          subject: selectedSubject,
-          grade: selectedGrade,
-          topic: topic,
-          action: action,
-          completed: true
-        }),
+      await apiService.updateVideoProgress({
+        video_id: videoId,
+        subject: selectedSubject,
+        grade: selectedGrade,
+        topic: topic,
+        action: action
       });
+
+      // Update local state
+      const key = `${selectedSubject}-${selectedGrade}-${topic}-${videoId}`;
+      setCompletedVideos(prev => ({
+        ...prev,
+        [key]: true
+      }));
+      
+      await AsyncStorage.setItem('completedVideos', JSON.stringify({
+        ...completedVideos,
+        [key]: true
+      }));
+
+      // Refresh progress overview
+      await fetchProgressOverview();
     } catch (error) {
       console.error('Error syncing video progress:', error);
     }
   };
 
   const getSubjectTopics = () => {
-    return VIDEO_DATA[selectedSubject]?.[selectedGrade] ? 
-      Object.keys(VIDEO_DATA[selectedSubject][selectedGrade]) : [];
+    return topics;
   };
 
-  const getVideosForTopic = (topic) => {
-    return VIDEO_DATA[selectedSubject]?.[selectedGrade]?.[topic] || [];
+  const getVideosForTopic = async (topic) => {
+    const videos = await fetchTopicVideos(topic);
+    return videos;
   };
 
   const isVideoCompleted = (topic, videoId) => {
@@ -725,14 +299,13 @@ export default function LessonsScreen({ navigation }) {
   const openVideoModal = async (video, topic) => {
     setVideoModal({
       visible: true,
-      videoId: video.id,
+      videoId: video.video_id,
       videoTitle: video.title
     });
 
     try {
-      const key = `${selectedSubject}-${selectedGrade}-${topic}-${video.id}`;
-      if (!completedVideos[key]) {
-        await syncVideoProgress(video.id, topic, 'started');
+      if (!isVideoCompleted(topic, video.video_id)) {
+        await syncVideoProgress(video.video_id, topic, 'started');
       }
     } catch (error) {
       console.error('Error tracking video start:', error);
@@ -740,21 +313,8 @@ export default function LessonsScreen({ navigation }) {
   };
 
   const closeVideoModal = async () => {
-    if (videoModal.videoId && videoModal.visible) {
-      const key = `${selectedSubject}-${selectedGrade}-${selectedTopic}-${videoModal.videoId}`;
-      if (!completedVideos[key]) {
-        setCompletedVideos(prev => ({
-          ...prev,
-          [key]: true
-        }));
-        
-        await syncVideoProgress(videoModal.videoId, selectedTopic, 'completed');
-        
-        await AsyncStorage.setItem('completedVideos', JSON.stringify({
-          ...completedVideos,
-          [key]: true
-        }));
-      }
+    if (videoModal.videoId && videoModal.visible && selectedTopic) {
+      await syncVideoProgress(videoModal.videoId, selectedTopic, 'completed');
     }
     
     setVideoModal({ visible: false, videoId: null, videoTitle: '' });
@@ -770,66 +330,8 @@ export default function LessonsScreen({ navigation }) {
     setAiResponse('');
 
     try {
-      const token = await AsyncStorage.getItem('access_token');
-      const backendResponse = await fetch(`${API_BASE_URL}/ai/ask-question`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          question: aiQuestion,
-          subject: selectedSubject,
-          grade: selectedGrade,
-          topic: selectedTopic
-        }),
-      });
-
-      if (backendResponse.ok) {
-        const data = await backendResponse.json();
-        setAiResponse(data.answer || data.response);
-        return;
-      }
-
-      if (!OPENAI_API_KEY) {
-        setAiResponse('AI assistant is currently unavailable. Please try again later.');
-        return;
-      }
-
-      const prompt = `As an expert ${selectedSubject} tutor for Grade ${selectedGrade}, answer this question about ${selectedTopic}: "${aiQuestion}"
-      
-Provide a clear, step-by-step explanation that a high school student can understand. Include examples if helpful. Keep the response under 300 words.`;
-
-      const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            {
-              role: 'system',
-              content: `You are a helpful ${selectedSubject} tutor for high school students. Explain concepts clearly and provide step-by-step guidance.`
-            },
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
-          max_tokens: 500,
-          temperature: 0.7
-        })
-      });
-
-      const data = await openaiResponse.json();
-      
-      if (data.choices && data.choices[0]) {
-        setAiResponse(data.choices[0].message.content);
-      } else {
-        setAiResponse('Unable to get response. Please try again.');
-      }
+      const data = await apiService.askQuestion(aiQuestion, selectedSubject, selectedGrade, selectedTopic);
+      setAiResponse(data.answer);
     } catch (error) {
       console.error('Error asking AI:', error);
       setAiResponse('Error connecting to AI service. Please check your internet connection.');
@@ -839,55 +341,12 @@ Provide a clear, step-by-step explanation that a high school student can underst
   };
 
   const generateStudyNotes = async (topic) => {
-    if (!OPENAI_API_KEY) {
-      return getStudyNotes(topic);
-    }
-
     try {
-      const prompt = `Create comprehensive study notes for ${selectedSubject}, Grade ${selectedGrade}, topic: ${topic}.
-      
-      Format the notes with:
-      - Clear headings using ## and ###
-      - Key concepts in bullet points
-      - Important formulas or rules
-      - Example problems with solutions
-      - Study tips
-      
-      Make it engaging and easy to understand for high school students.`;
-
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an expert educational content creator. Create clear, structured study notes for high school students.'
-            },
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
-          max_tokens: 1000,
-          temperature: 0.7
-        })
-      });
-
-      const data = await response.json();
-      
-      if (data.choices && data.choices[0]) {
-        return data.choices[0].message.content;
-      } else {
-        return getStudyNotes(topic);
-      }
+      const data = await apiService.generateStudyNotes(selectedSubject, selectedGrade, topic);
+      return data.notes?.content || 'Study notes coming soon for this topic.';
     } catch (error) {
       console.error('Error generating study notes:', error);
-      return getStudyNotes(topic);
+      return 'Study notes coming soon for this topic.';
     }
   };
 
@@ -906,7 +365,7 @@ Provide a clear, step-by-step explanation that a high school student can underst
       return notes;
     } catch (error) {
       console.error('Error loading notes:', error);
-      return getStudyNotes(topic);
+      return 'Study notes coming soon for this topic.';
     } finally {
       setLoadingNotes(prev => ({ ...prev, [noteKey]: false }));
     }
@@ -916,19 +375,11 @@ Provide a clear, step-by-step explanation that a high school student can underst
     setDownloadingPaper(paper.id);
     
     try {
-      const token = await AsyncStorage.getItem('access_token');
-      await fetch(`${API_BASE_URL}/progress/download-resource`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          resource_type: 'exam_paper',
-          resource_id: paper.id,
-          subject: paper.subject,
-          grade: paper.grade
-        }),
+      await apiService.downloadResource({
+        resource_type: 'exam_paper',
+        resource_id: paper.id,
+        subject: paper.subject,
+        grade: paper.grade
       });
 
       Alert.alert(
@@ -956,8 +407,8 @@ Provide a clear, step-by-step explanation that a high school student can underst
     try {
       await Share.share({
         title: paper.title,
-        message: `Check out this ${paper.subject} exam paper for Grade ${paper.grade}: ${paper.downloadUrl}`,
-        url: paper.downloadUrl
+        message: `Check out this ${paper.subject} exam paper for Grade ${paper.grade}: ${paper.download_url}`,
+        url: paper.download_url
       });
     } catch (error) {
       Alert.alert('Share Error', 'Could not share the paper.');
@@ -965,11 +416,51 @@ Provide a clear, step-by-step explanation that a high school student can underst
   };
 
   const getExamPapers = () => {
-    return EXAM_PAPERS[selectedSubject]?.[selectedGrade] || [];
+    return examPapers;
   };
 
-  const getStudyNotes = (topic) => {
-    return STUDY_NOTES[selectedSubject]?.[topic] || 'Study notes coming soon for this topic.';
+  // Separate component for NotesTab to fix hook order issue
+  const NotesTab = ({ selectedSubject, selectedGrade, selectedTopic, loadingNotes, loadGeneratedNotes }) => {
+    const [currentNotes, setCurrentNotes] = useState(null);
+
+    useEffect(() => {
+      if (selectedTopic) {
+        const loadNotes = async () => {
+          const notes = await loadGeneratedNotes(selectedTopic);
+          setCurrentNotes(notes);
+        };
+        loadNotes();
+      }
+    }, [selectedTopic, selectedSubject, selectedGrade]);
+
+    const noteKey = `${selectedSubject}-${selectedGrade}-${selectedTopic}`;
+    const isLoading = loadingNotes[noteKey];
+
+    return (
+      <ScrollView style={styles.tabContent}>
+        <Text style={styles.sectionTitle}>Study Notes</Text>
+        {isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#4ECDC4" />
+            <Text style={styles.loadingText}>Generating AI-powered study notes...</Text>
+          </View>
+        ) : (
+          <>
+            <View style={styles.notesCard}>
+              <ScrollView>
+                <Text style={styles.notesText}>
+                  {currentNotes || 'Study notes coming soon for this topic.'}
+                </Text>
+              </ScrollView>
+            </View>
+            <TouchableOpacity style={styles.downloadButton}>
+              <Ionicons name="download" size={20} color="#FFFFFF" />
+              <Text style={styles.downloadButtonText}>Download Notes PDF</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </ScrollView>
+    );
   };
 
   const renderExamsTab = () => {
@@ -1022,60 +513,9 @@ Provide a clear, step-by-step explanation that a high school student can underst
     );
   };
 
-  const renderNotesTab = () => {
-    const [currentNotes, setCurrentNotes] = useState(null);
-
-    useEffect(() => {
-      if (selectedTopic) {
-        const loadNotes = async () => {
-          const notes = await loadGeneratedNotes(selectedTopic);
-          setCurrentNotes(notes);
-        };
-        loadNotes();
-      }
-    }, [selectedTopic]);
-
-    const noteKey = `${selectedSubject}-${selectedGrade}-${selectedTopic}`;
-    const isLoading = loadingNotes[noteKey];
-
-    return (
-      <ScrollView style={styles.tabContent}>
-        <Text style={styles.sectionTitle}>Study Notes</Text>
-        {isLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#4ECDC4" />
-            <Text style={styles.loadingText}>Generating AI-powered study notes...</Text>
-          </View>
-        ) : (
-          <>
-            <View style={styles.notesCard}>
-              <ScrollView>
-                <Text style={styles.notesText}>
-                  {currentNotes || getStudyNotes(selectedTopic)}
-                </Text>
-              </ScrollView>
-            </View>
-            <TouchableOpacity style={styles.downloadButton}>
-              <Ionicons name="download" size={20} color="#FFFFFF" />
-              <Text style={styles.downloadButtonText}>Download Notes PDF</Text>
-            </TouchableOpacity>
-          </>
-        )}
-      </ScrollView>
-    );
-  };
-
   const renderSubjectCard = (subject) => {
-    const topics = getSubjectTopics();
-    const totalVideos = topics.reduce((total, topic) => 
-      total + getVideosForTopic(topic).length, 0
-    );
-    const completedCount = topics.reduce((total, topic) => 
-      total + getVideosForTopic(topic).filter(video => 
-        isVideoCompleted(topic, video.id)
-      ).length, 0
-    );
-    const progressPercent = totalVideos > 0 ? (completedCount / totalVideos) * 100 : 0;
+    const subjectProgressData = subjectProgress[subject] || { total_lessons: 0, completed_lessons: 0, progress_percent: 0 };
+    const progressPercent = subjectProgressData.progress_percent || 0;
 
     return (
       <TouchableOpacity
@@ -1113,7 +553,7 @@ Provide a clear, step-by-step explanation that a high school student can underst
           <View style={styles.statItem}>
             <Ionicons name="play-circle" size={16} color="#4ECDC4" />
             <Text style={styles.statText}>
-              {completedCount}/{totalVideos} completed
+              {subjectProgressData.completed_lessons || 0}/{subjectProgressData.total_lessons || 0} completed
             </Text>
           </View>
         </View>
@@ -1132,14 +572,19 @@ Provide a clear, step-by-step explanation that a high school student can underst
   };
 
   const renderTopicItem = ({ item: topic }) => {
-    const videos = getVideosForTopic(topic);
-    const completedCount = videos.filter(video => isVideoCompleted(topic, video.id)).length;
-    const totalVideos = videos.length;
+    // For now, we'll show placeholder progress until we implement topic-level progress
+    const completedCount = 0;
+    const totalVideos = 1; // Placeholder
 
     return (
       <TouchableOpacity
         style={styles.topicCard}
-        onPress={() => setSelectedTopic(topic)}
+        onPress={async () => {
+          setSelectedTopic(topic);
+          // Pre-fetch videos for this topic
+          const topicVideos = await fetchTopicVideos(topic);
+          setVideos(topicVideos);
+        }}
       >
         <View style={styles.topicHeader}>
           <View style={styles.topicIcon}>
@@ -1212,7 +657,15 @@ Provide a clear, step-by-step explanation that a high school student can underst
 
           <View style={styles.detailContent}>
             {activeTab === 'videos' && renderVideosTab()}
-            {activeTab === 'notes' && renderNotesTab()}
+            {activeTab === 'notes' && (
+              <NotesTab 
+                selectedSubject={selectedSubject}
+                selectedGrade={selectedGrade}
+                selectedTopic={selectedTopic}
+                loadingNotes={loadingNotes}
+                loadGeneratedNotes={loadGeneratedNotes}
+              />
+            )}
             {activeTab === 'exams' && renderExamsTab()}
             {activeTab === 'qa' && renderQATab()}
           </View>
@@ -1222,41 +675,46 @@ Provide a clear, step-by-step explanation that a high school student can underst
   };
 
   const renderVideosTab = () => {
-    const videos = getVideosForTopic(selectedTopic);
-    
     return (
       <ScrollView style={styles.tabContent}>
         <Text style={styles.sectionTitle}>Video Lessons ({videos.length})</Text>
-        {videos.map((video, index) => (
-          <TouchableOpacity 
-            key={video.id} 
-            style={styles.videoItem}
-            onPress={() => openVideoModal(video, selectedTopic)}
-          >
-            <View style={styles.videoThumbnail}>
-              <Image 
-                source={{ uri: `https://img.youtube.com/vi/${video.id}/mqdefault.jpg` }}
-                style={styles.thumbnailImage}
-              />
-              <View style={styles.playButtonOverlay}>
-                <Ionicons name="play-circle" size={40} color="#FFFFFF" />
-              </View>
-              <View style={styles.durationBadge}>
-                <Text style={styles.durationText}>{video.duration}</Text>
-              </View>
-              {isVideoCompleted(selectedTopic, video.id) && (
-                <View style={styles.completedBadge}>
-                  <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+        {videos.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="videocam" size={48} color="#CBD5E0" />
+            <Text style={styles.emptyStateText}>No videos available for this topic</Text>
+          </View>
+        ) : (
+          videos.map((video, index) => (
+            <TouchableOpacity 
+              key={video.id} 
+              style={styles.videoItem}
+              onPress={() => openVideoModal(video, selectedTopic)}
+            >
+              <View style={styles.videoThumbnail}>
+                <Image 
+                  source={{ uri: `https://img.youtube.com/vi/${video.video_id}/mqdefault.jpg` }}
+                  style={styles.thumbnailImage}
+                />
+                <View style={styles.playButtonOverlay}>
+                  <Ionicons name="play-circle" size={40} color="#FFFFFF" />
                 </View>
-              )}
-            </View>
-            <View style={styles.videoInfo}>
-              <Text style={styles.videoTitle}>{video.title}</Text>
-              <Text style={styles.channelName}>{video.channel}</Text>
-              <Text style={styles.videoDescription}>{video.description}</Text>
-            </View>
-          </TouchableOpacity>
-        ))}
+                <View style={styles.durationBadge}>
+                  <Text style={styles.durationText}>{video.duration}</Text>
+                </View>
+                {isVideoCompleted(selectedTopic, video.video_id) && (
+                  <View style={styles.completedBadge}>
+                    <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                  </View>
+                )}
+              </View>
+              <View style={styles.videoInfo}>
+                <Text style={styles.videoTitle}>{video.title}</Text>
+                <Text style={styles.channelName}>{video.channel}</Text>
+                <Text style={styles.videoDescription}>{video.description}</Text>
+              </View>
+            </TouchableOpacity>
+          ))
+        )}
       </ScrollView>
     );
   };
@@ -1331,6 +789,17 @@ Provide a clear, step-by-step explanation that a high school student can underst
               </View>
             </View>
 
+            {/* Error Display */}
+            {error && (
+              <View style={styles.errorContainer}>
+                <Ionicons name="warning" size={20} color="#FF6B6B" />
+                <Text style={styles.errorText}>{error}</Text>
+                <TouchableOpacity onPress={fetchCurriculumData}>
+                  <Text style={styles.retryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Grade Selector */}
             <ScrollView 
               horizontal 
@@ -1367,14 +836,26 @@ Provide a clear, step-by-step explanation that a high school student can underst
               <Text style={styles.sectionTitle}>
                 {selectedSubject} - Grade {selectedGrade} Topics
               </Text>
-              <FlatList
-                data={getSubjectTopics()}
-                renderItem={renderTopicItem}
-                keyExtractor={item => item}
-                scrollEnabled={true}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.topicsList}
-              />
+              {loading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#4ECDC4" />
+                  <Text style={styles.loadingText}>Loading topics...</Text>
+                </View>
+              ) : topics.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Ionicons name="book" size={48} color="#CBD5E0" />
+                  <Text style={styles.emptyStateText}>No topics available for this subject and grade</Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={getSubjectTopics()}
+                  renderItem={renderTopicItem}
+                  keyExtractor={item => item}
+                  scrollEnabled={true}
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.topicsList}
+                />
+              )}
             </View>
 
             {renderTopicDetail()}
@@ -1446,6 +927,30 @@ const styles = StyleSheet.create({
     marginTop: 10
   },
   streakText: { color: '#FFD166', fontSize: 14, fontWeight: '600', marginLeft: 5 },
+  
+  // Error Container
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,107,107,0.1)',
+    padding: 12,
+    marginHorizontal: 15,
+    marginBottom: 15,
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF6B6B'
+  },
+  errorText: {
+    color: '#FF6B6B',
+    fontSize: 14,
+    flex: 1,
+    marginLeft: 8
+  },
+  retryText: {
+    color: '#FFD166',
+    fontSize: 14,
+    fontWeight: '600'
+  },
   
   // Grade Selector
   gradeSelector: { 
